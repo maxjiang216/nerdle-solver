@@ -18,6 +18,7 @@
 constexpr int SEARCH_CAP = 600;  /* No subsample of union when |c1∪c2| <= this */
 constexpr size_t MC_PAIR_THRESHOLD = 50000;  /* Use Monte Carlo above this */
 constexpr size_t MC_SAMPLE_SIZE = 8000;
+static const int NUM_STRATA = 16;
 constexpr int MAX_TRIES = 7;
 
 static const std::unordered_map<int, std::string> FIRST_GUESS = {
@@ -52,7 +53,25 @@ bool is_consistent(const std::string& candidate, const std::string& guess,
     return compute_feedback(guess, candidate, N) == feedback;
 }
 
-/** Entropy of guess over PAIR space (c1 x c2). Uses Monte Carlo when too large. */
+int equation_type(const std::string& eq) {
+    size_t eq_pos = eq.find('=');
+    if (eq_pos == std::string::npos) return 0;
+    long long rhs = 0;
+    for (size_t i = eq_pos + 1; i < eq.size(); i++) {
+        if (eq[i] >= '0' && eq[i] <= '9') rhs = rhs * 10 + (eq[i] - '0');
+    }
+    int op_mask = 0;
+    for (size_t i = 0; i < eq_pos; i++) {
+        if (eq[i] == '+') op_mask |= 1;
+        else if (eq[i] == '-') op_mask |= 2;
+        else if (eq[i] == '*') op_mask |= 4;
+        else if (eq[i] == '/') op_mask |= 8;
+    }
+    int result_bucket = (rhs <= 9) ? 0 : (rhs <= 99) ? 1 : 2;
+    return (op_mask % 8) * 3 + result_bucket;
+}
+
+/** Entropy of guess over PAIR space (c1 x c2), distinct pairs. Uses stratified MC when too large. */
 double entropy_of_guess_pairs(const std::string& guess,
                               const std::vector<std::string>& all_eqs,
                               const std::vector<size_t>& c1, const std::vector<size_t>& c2,
@@ -61,22 +80,52 @@ double entropy_of_guess_pairs(const std::string& guess,
     std::unordered_map<std::string, int> pattern_count;
 
     if (pair_count <= MC_PAIR_THRESHOLD) {
-        for (size_t i : c1) {
-            std::string fb1 = compute_feedback(guess, all_eqs[i], N);
-            for (size_t j : c2) {
-                std::string fb2 = compute_feedback(guess, all_eqs[j], N);
+        for (size_t ii : c1) {
+            std::string fb1 = compute_feedback(guess, all_eqs[ii], N);
+            for (size_t jj : c2) {
+                if (ii == jj) continue;  /* distinct pairs */
+                std::string fb2 = compute_feedback(guess, all_eqs[jj], N);
                 pattern_count[fb1 + "|" + fb2]++;
             }
         }
     } else {
-        /* Monte Carlo: deterministic strided sample */
-        size_t step = pair_count / MC_SAMPLE_SIZE;
-        if (step < 1) step = 1;
-        for (size_t ij = 0; ij < pair_count; ij += step) {
-            size_t i = ij % c1.size(), j = ij / c1.size();
-            std::string fb1 = compute_feedback(guess, all_eqs[c1[i]], N);
-            std::string fb2 = compute_feedback(guess, all_eqs[c2[j]], N);
+        /* Stratified MC: partition c1 by equation type, sample proportionally, distinct */
+        std::vector<std::vector<size_t>> strata(NUM_STRATA);
+        for (size_t idx : c1) {
+            int t = equation_type(all_eqs[idx]) % NUM_STRATA;
+            strata[t].push_back(idx);
+        }
+        size_t n1 = c1.size(), n2 = c2.size();
+        size_t accepted = 0;
+        for (int h = 0; h < NUM_STRATA && accepted < MC_SAMPLE_SIZE; h++) {
+            if (strata[h].empty()) continue;
+            size_t n_h = (MC_SAMPLE_SIZE * strata[h].size() + n1 - 1) / n1;
+            if (n_h == 0) n_h = 1;
+            for (size_t sh = 0; sh < n_h && accepted < MC_SAMPLE_SIZE; sh++) {
+                size_t r = (h * 7919ULL + sh * 2654435761ULL);
+                size_t ei = strata[h][r % strata[h].size()];
+                for (int attempt = 0; attempt < 20; attempt++) {
+                    r = r * 7919 + 2654435761;
+                    size_t j = r % n2;
+                    size_t ej = c2[j];
+                    if (ei == ej) continue;
+                    std::string fb1 = compute_feedback(guess, all_eqs[ei], N);
+                    std::string fb2 = compute_feedback(guess, all_eqs[ej], N);
+                    pattern_count[fb1 + "|" + fb2]++;
+                    accepted++;
+                    break;
+                }
+            }
+        }
+        for (size_t s = accepted; accepted < MC_SAMPLE_SIZE && s < MC_SAMPLE_SIZE * 5; s++) {
+            size_t r = s * 2654435761ULL;
+            size_t i = r % n1, j = (r / n1) % n2;
+            size_t ei = c1[i], ej = c2[j];
+            if (ei == ej) continue;
+            std::string fb1 = compute_feedback(guess, all_eqs[ei], N);
+            std::string fb2 = compute_feedback(guess, all_eqs[ej], N);
             pattern_count[fb1 + "|" + fb2]++;
+            accepted++;
         }
     }
 

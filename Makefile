@@ -6,7 +6,7 @@ BINDIR = .
 
 .PHONY: all clean
 
-all: generate generate_maxi solve solve_adaptive solve_binerdle bench_nerdle nerdle binerdle bench_binerdle
+all: generate generate_maxi solve solve_adaptive solve_binerdle solve_quadnerdle bench_nerdle nerdle binerdle bench_binerdle quadnerdle bench_quadnerdle
 
 generate: $(SRCDIR)/generate.cpp
 	$(CXX) $(CXXFLAGS) -fopenmp -o $(BINDIR)/$@ $<
@@ -23,6 +23,9 @@ solve_adaptive: $(SRCDIR)/solve_adaptive.cpp
 solve_binerdle: $(SRCDIR)/solve_binerdle.cpp
 	$(CXX) $(CXXFLAGS) -fopenmp -o $(BINDIR)/$@ $<
 
+solve_quadnerdle: $(SRCDIR)/solve_quadnerdle.cpp
+	$(CXX) $(CXXFLAGS) -fopenmp -o $(BINDIR)/$@ $<
+
 bench_nerdle: $(SRCDIR)/bench_nerdle.cpp
 	$(CXX) $(CXXFLAGS) -fopenmp -o $(BINDIR)/$@ $<
 
@@ -35,8 +38,14 @@ binerdle: $(SRCDIR)/binerdle.cpp
 bench_binerdle: $(SRCDIR)/bench_binerdle.cpp
 	$(CXX) $(CXXFLAGS) -fopenmp -o $(BINDIR)/$@ $<
 
+quadnerdle: $(SRCDIR)/quadnerdle.cpp
+	$(CXX) $(CXXFLAGS) -fopenmp -o $(BINDIR)/$@ $<
+
+bench_quadnerdle: $(SRCDIR)/bench_quadnerdle.cpp
+	$(CXX) $(CXXFLAGS) -fopenmp -o $(BINDIR)/$@ $<
+
 clean:
 	rm -f $(BINDIR)/generate $(BINDIR)/generate_maxi $(BINDIR)/solve \
-	      $(BINDIR)/solve_adaptive $(BINDIR)/solve_binerdle \
+	      $(BINDIR)/solve_adaptive $(BINDIR)/solve_binerdle $(BINDIR)/solve_quadnerdle \
 	      $(BINDIR)/bench_nerdle $(BINDIR)/nerdle $(BINDIR)/binerdle \
-	      $(BINDIR)/bench_binerdle
+	      $(BINDIR)/bench_binerdle $(BINDIR)/quadnerdle $(BINDIR)/bench_quadnerdle

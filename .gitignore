@@ -4,10 +4,13 @@ generate_maxi
 solve
 solve_adaptive
 solve_binerdle
+solve_quadnerdle
 bench_nerdle
 bench_binerdle
 nerdle
 binerdle
+quadnerdle
+bench_quadnerdle
 test_fb
 
 # Generated data (run ./generate or ./generate_maxi to create)
