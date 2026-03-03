@@ -1,0 +1,20 @@
+# Binaries
+generate
+generate_maxi
+solve
+solve_adaptive
+solve_binerdle
+bench_nerdle
+bench_binerdle
+nerdle
+binerdle
+
+# Python
+__pycache__/
+*.pyc
+
+# Large generated data (users can regenerate with ./generate or ./generate_maxi)
+data/equations_10.txt
+
+# Misc
+*.bak
