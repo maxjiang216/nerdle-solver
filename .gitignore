@@ -8,13 +8,19 @@ bench_nerdle
 bench_binerdle
 nerdle
 binerdle
+test_fb
+
+# Generated data (run ./generate or ./generate_maxi to create)
+data/*
+!data/.gitkeep
+equations_*.txt
 
 # Python
 __pycache__/
 *.pyc
 
-# Large generated data (users can regenerate with ./generate or ./generate_maxi)
-data/equations_10.txt
+# IDE / tools
+.claude/
 
 # Misc
 *.bak
