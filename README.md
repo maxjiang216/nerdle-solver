@@ -1,6 +1,6 @@
 # Nerdle Solver
 
-Entropy-based solver for [Nerdle](https://www.nerdlegame.com/) and [Binerdle](https://www.nerdlegame.com/binerdle.html). Supports Micro (5-tile), Mini (6), Midi (7), Classic (8-tile) Nerdle, plus Binerdle Mini (6) and Normal (8).
+Entropy-based solver for [Nerdle](https://www.nerdlegame.com/), [Binerdle](https://www.nerdlegame.com/binerdle.html), and [Quad Nerdle](https://www.nerdlegame.com/quadnerdle.html). Supports Micro (5-tile), Mini (6), Midi (7), Classic (8-tile) Nerdle, plus Binerdle Mini (6) and Normal (8), and Quad Nerdle (4 equations in 10 tries).
 
 ---
 
@@ -38,6 +38,11 @@ make                           # build C++ tools
 ./binerdle --len 8             # normal, interactive player
 ./bench_binerdle data/equations_6.txt
 ./bench_binerdle data/equations_8.txt
+
+# Quad Nerdle (guess 4 equations in 10 tries)
+./solve_quadnerdle data/equations_8.txt   # optimal 1st guess (stratified, --no-stratify for plain)
+./quadnerdle --len 8                      # interactive player
+./bench_quadnerdle data/equations_8.txt   # benchmark (sampled distinct quadruples)
 ```
 
 ---
@@ -53,6 +58,9 @@ make                           # build C++ tools
 | Binerdle optimal 1st | `./solve_binerdle data/equations_6.txt` |
 | Binerdle interactive | `./binerdle --len 6` or `--len 8` |
 | Binerdle benchmark | `./bench_binerdle data/equations_6.txt` |
+| Quad Nerdle optimal 1st | `./solve_quadnerdle data/equations_8.txt` |
+| Quad Nerdle interactive | `./quadnerdle --len 8` |
+| Quad Nerdle benchmark | `./bench_quadnerdle data/equations_8.txt` |
 
 ---
 
@@ -124,7 +132,7 @@ Press Enter to use the suggested guess, or type your own. Type `y` when you solv
 
 ### 4. Binerdle (`binerdle`)
 
-Guess 2 Nerdle equations in 7 tries. **One guess per turn** applies to both; you get separate feedback for each equation.
+Guess 2 Nerdle equations in 7 tries. **One guess per turn** applies to both; you get separate feedback for each equation. The two equations are always distinct. Uses stratified sampling when the candidate pair space is large.
 
 ```bash
 ./binerdle --len 6     # mini (6-tile equations)
@@ -135,7 +143,19 @@ Enter feedback for each equation (G/P/B or `y` if correct). You can override the
 
 ---
 
-### 5. Benchmark (`bench_nerdle`)
+### 5. Quad Nerdle (`quadnerdle`)
+
+Guess 4 Nerdle equations in 10 tries. **One guess per turn** applies to all four; you get separate feedback for each equation. All 4 equations are always distinct. Uses stratified Monte Carlo for entropy when the candidate space is large.
+
+```bash
+./quadnerdle --len 8
+```
+
+Enter feedback for each of the 4 equations (G/P/B or `y` if correct). Recommended first guess: **1\*15-9=6** (Quad-optimal) or **43-27=16** (Binerdle optimal). Run `./solve_quadnerdle data/equations_8.txt` to recompute.
+
+---
+
+### 6. Benchmark (`bench_nerdle`)
 
 ```bash
 ./bench_nerdle data/equations_8.txt
@@ -146,7 +166,7 @@ Simulates the solver against all equations and reports mean/max guesses and dist
 
 ---
 
-### 6. Binerdle benchmark (`bench_binerdle`)
+### 7. Binerdle benchmark (`bench_binerdle`)
 
 ```bash
 ./bench_binerdle data/equations_6.txt   # mini
@@ -154,6 +174,19 @@ Simulates the solver against all equations and reports mean/max guesses and dist
 ```
 
 Simulates Binerdle with one shared guess per turn. Reports mean guesses and distribution. Turns = when both equations are identified (effectively max of the two "virtual" identification times).
+
+---
+
+### 8. Quad Nerdle benchmark (`bench_quadnerdle`)
+
+```bash
+./bench_quadnerdle data/equations_8.txt
+./bench_quadnerdle data/equations_8.txt --sample 10000
+./bench_quadnerdle data/equations_8.txt --single    # use 48-32=16 as first guess
+./bench_quadnerdle data/equations_8.txt --binerdle  # use 43-27=16 as first guess
+```
+
+Simulates Quad Nerdle over **sampled distinct** quadruples (all 4 equations different). Default 5000 samples. Compare single vs Binerdle first guess with `--single` / `--binerdle`.
 
 ---
 
@@ -197,12 +230,22 @@ make clean        # remove binaries
 | 8 (classic) | 48-32=16 | 9.78 bits |
 | 10 (maxi) | 76+1-23=54 | 12.82 bits |
 
-**Binerdle (pair space):**
+**Binerdle (pair space, distinct equations):**
 
 | Length | First guess | Notes |
 |--------|-------------|------|
 | 6 (mini) | 4*7=28 | Same as single |
-| 8 (normal) | 43-27=16 | Slightly better than 48-32=16 for pairs |
+| 8 (normal) | 43-27=16 | Slightly better than 48-32=16 for distinct pairs |
+
+**Quad Nerdle (quad space, len 8):**
+
+| First guess | Notes |
+|-------------|-------|
+| 1\*15-9=6 | Quad-optimal (stratified MC) |
+| 43-27=16 | Binerdle optimal; very close |
+| 48-32=16 | Single Nerdle optimal; very close |
+
+Run `./solve_quadnerdle data/equations_8.txt` to recompute. **All 4 equations are always distinct** (space = P(n,4) = n×(n-1)×(n-2)×(n-3), not n⁴). Uses **adaptive strategy** with stratified sampling and a 200k-quad tiebreaker when the top 2 are within 0.02 bits. Use `--no-stratify` for plain random sampling.
 
 **Benchmark stats (lengths 5–10):**
 
@@ -215,6 +258,28 @@ make clean        # remove binaries
 | 10 (maxi) | 3.65 | 0.2% | 37.6% | 59.0% | 3.2% |
 
 *Maxi stats from 5k-sample benchmark (`./bench_nerdle data/equations_10.txt --sample 5000`). Full benchmark ~1.8M equations would take hours.*
+
+---
+
+## Why different games favour different first guesses
+
+**Single Nerdle** maximizes H(fb) — how evenly the guess partitions the solution space. A guess like `48-32=16` is optimal because it creates many distinct feedback patterns with similar probability.
+
+**Binerdle** maximizes H(fb₁, fb₂) over *pairs* of equations. This equals H(fb₁) + H(fb₂|fb₁). A guess that’s good for single might induce correlated feedback when applied to two equations (similar equations → similar feedback). `43-27=16` is slightly better than `48-32=16` for pairs because it tends to produce more *independent* feedback across the two slots — knowing fb₁ gives less information about fb₂.
+
+**Quad Nerdle** maximizes H(fb₁, fb₂, fb₃, fb₄). We want each successive conditional entropy H(fbₖ|fb₁…fbₖ₋₁) to stay high. A guess that “spreads out” feedback across equations with different structure (operators, digits, result size) is better for Quad: it reduces correlation between the four patterns. A guess optimal for single might cluster too much feedback into a few joint patterns when applied to four diverse equations.
+
+---
+
+## Stratified sampling
+
+Plain Monte Carlo can undersample certain equation families (e.g. division-heavy or small-result equations). **Stratified sampling** classifies each equation by type (operator mix + result magnitude bucket) and samples proportionally from each stratum. This yields lower variance and a more stable ranking of guesses. Used in:
+
+- **solve_quadnerdle** — for finding the optimal first guess (use `--no-stratify` to disable)
+- **quadnerdle** — for subsequent guesses when the candidate space exceeds 50k
+- **binerdle** — for subsequent guesses when the pair space exceeds 50k
+
+Implementation uses 16 strata and proportional allocation.
 
 ---
 
