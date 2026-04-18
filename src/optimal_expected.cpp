@@ -6,8 +6,8 @@
  * is played and matches (all green). Optimal play minimizes E[guesses] via Bellman DP
  * over candidate-set states (bitmask over equation indices).
  *
- * Feasible when the memoized state count stays modest (Micro ~127: typically low tens of
- * thousands). For very large pools this may be slow or memory-heavy.
+ * Feasible when the memoized state count stays modest (e.g. Micro ~127 or Mini ~206: on the
+ * order of 10^4–10^5 states). For very large pools this may be slow or memory-heavy.
  *
  * Horizon: minimizes E[guesses until the secret is guessed correctly], with no turn limit
  * (infinite guesses allowed). This is the exact Bellman optimum for that objective; it does
@@ -30,63 +30,13 @@
 #include <unordered_map>
 #include <vector>
 
-namespace {
-
-struct Mask128 {
-    uint64_t lo = 0;
-    uint64_t hi = 0;
-};
-
-inline bool operator==(Mask128 a, Mask128 b) {
-    return a.lo == b.lo && a.hi == b.hi;
-}
-
-struct MaskHash {
-    size_t operator()(Mask128 m) const noexcept {
-        return static_cast<size_t>(m.lo ^ (m.hi * 0x9e3779b97f4a7c15ULL));
-    }
-};
-
-inline int popcount(Mask128 m) {
-    return __builtin_popcountll(m.lo) + __builtin_popcountll(m.hi);
-}
-
-inline Mask128 set_bit(Mask128 m, int i) {
-    if (i < 64)
-        m.lo |= (1ULL << i);
-    else
-        m.hi |= (1ULL << (i - 64));
-    return m;
-}
-
-inline bool eq_mask(Mask128 a, Mask128 b) {
-    return a.lo == b.lo && a.hi == b.hi;
-}
-
-Mask128 full_mask(int n) {
-    Mask128 m{};
-    for (int i = 0; i < n; i++)
-        m = set_bit(m, i);
-    return m;
-}
-
-template <typename F>
-void for_each_bit(Mask128 m, F&& fn) {
-    uint64_t x = m.lo;
-    while (x) {
-        int i = __builtin_ctzll(x);
-        fn(i);
-        x &= x - 1;
-    }
-    x = m.hi;
-    while (x) {
-        int i = __builtin_ctzll(x);
-        fn(i + 64);
-        x &= x - 1;
-    }
-}
-
-} // namespace
+using nerdle::PolicyMask;
+using nerdle::PolicyMaskHash;
+using nerdle::eq_mask;
+using nerdle::for_each_bit;
+using nerdle::full_policy_mask;
+using nerdle::popcount;
+using nerdle::set_bit;
 
 int main(int argc, char** argv) {
     std::string path = "data/equations_5.txt";
@@ -126,8 +76,8 @@ int main(int argc, char** argv) {
         std::cerr << "No equations in file.\n";
         return 1;
     }
-    if (n > 128) {
-        std::cerr << "At most 128 equations supported (bitmask).\n";
+    if (n > 256) {
+        std::cerr << "At most 256 equations supported (bitmask).\n";
         return 1;
     }
     const int N = static_cast<int>(eqs[0].size());
@@ -148,12 +98,12 @@ int main(int argc, char** argv) {
         }
     }
 
-    std::unordered_map<Mask128, double, MaskHash> memo;
+    std::unordered_map<PolicyMask, double, PolicyMaskHash> memo;
 
     const double inf = std::numeric_limits<double>::infinity();
     constexpr double tie_eps = 1e-12;
 
-    auto V = [&](auto&& self, Mask128 mask) -> double {
+    auto V = [&](auto&& self, PolicyMask mask) -> double {
         int k = popcount(mask);
         if (k == 0)
             return 0.0;
@@ -166,10 +116,10 @@ int main(int argc, char** argv) {
         double best = inf;
         for (int g = 0; g < n; g++) {
             const std::string& Gstr = eqs[static_cast<size_t>(g)];
-            std::unordered_map<uint32_t, Mask128> cells;
+            std::unordered_map<uint32_t, PolicyMask> cells;
             for_each_bit(mask, [&](int i) {
                 uint32_t code = fb[static_cast<size_t>(g)][static_cast<size_t>(i)];
-                Mask128& cm = cells[code];
+                PolicyMask& cm = cells[code];
                 cm = set_bit(cm, i);
             });
 
@@ -188,7 +138,7 @@ int main(int argc, char** argv) {
                     sum += 1.0;
                 } else {
                     uint32_t code = fb[static_cast<size_t>(g)][static_cast<size_t>(i)];
-                    Mask128 sub = cells[code];
+                    PolicyMask sub = cells[code];
                     if (eq_mask(sub, mask)) {
                         bad = true;
                         return;
@@ -211,7 +161,7 @@ int main(int argc, char** argv) {
         return best;
     };
 
-    auto V_at = [&](Mask128 m) -> double {
+    auto V_at = [&](PolicyMask m) -> double {
         int k = popcount(m);
         if (k == 0)
             return 0.0;
@@ -221,15 +171,15 @@ int main(int argc, char** argv) {
     };
 
     /** Expected value for mask if we play guess g (uses memoized V on proper subsets). */
-    auto ev_for_guess = [&](Mask128 mask, int g, double& out_ev) -> bool {
+    auto ev_for_guess = [&](PolicyMask mask, int g, double& out_ev) -> bool {
         int k = popcount(mask);
         if (k < 2)
             return false;
         const std::string& Gstr = eqs[static_cast<size_t>(g)];
-        std::unordered_map<uint32_t, Mask128> cells;
+        std::unordered_map<uint32_t, PolicyMask> cells;
         for_each_bit(mask, [&](int i) {
             uint32_t code = fb[static_cast<size_t>(g)][static_cast<size_t>(i)];
-            Mask128& cm = cells[code];
+            PolicyMask& cm = cells[code];
             cm = set_bit(cm, i);
         });
         bool gin = false;
@@ -246,7 +196,7 @@ int main(int argc, char** argv) {
                 sum += 1.0;
             } else {
                 uint32_t code = fb[static_cast<size_t>(g)][static_cast<size_t>(i)];
-                Mask128 sub = cells[code];
+                PolicyMask sub = cells[code];
                 if (eq_mask(sub, mask)) {
                     bad = true;
                     return;
@@ -261,7 +211,7 @@ int main(int argc, char** argv) {
     };
 
     /** Deterministic Bellman-optimal action: minimize E; tie-break smallest index g. */
-    auto optimal_guess_index = [&](Mask128 mask) -> int {
+    auto optimal_guess_index = [&](PolicyMask mask) -> int {
         int k = popcount(mask);
         if (k == 1) {
             int only = -1;
@@ -286,14 +236,14 @@ int main(int argc, char** argv) {
         return best_g;
     };
 
-    Mask128 full = full_mask(n);
+    PolicyMask full = full_policy_mask(n);
     auto t0 = std::chrono::steady_clock::now();
     double optimal = V(V, full);
     auto t1 = std::chrono::steady_clock::now();
     double sec = std::chrono::duration<double>(t1 - t0).count();
 
     if (!write_policy_path.empty()) {
-        std::vector<std::pair<Mask128, uint8_t>> entries;
+        std::vector<std::pair<PolicyMask, uint8_t>> entries;
         entries.reserve(memo.size());
         for (const auto& kv : memo) {
             if (popcount(kv.first) < 2)
@@ -307,7 +257,8 @@ int main(int argc, char** argv) {
             return 1;
         }
         const uint32_t magic = nerdle::kMicroPolicyMagic;
-        const uint32_t ver = 1;
+        const uint32_t ver =
+            (n <= 128) ? nerdle::kPolicyFormatVer1 : nerdle::kPolicyFormatVer2;
         const uint32_t nent = static_cast<uint32_t>(entries.size());
         const uint8_t neq = static_cast<uint8_t>(n);
         wf.write(reinterpret_cast<const char*>(&magic), 4);
@@ -317,8 +268,12 @@ int main(int argc, char** argv) {
         wf.write(pad, 3);
         wf.write(reinterpret_cast<const char*>(&nent), 4);
         for (const auto& e : entries) {
-            wf.write(reinterpret_cast<const char*>(&e.first.lo), 8);
-            wf.write(reinterpret_cast<const char*>(&e.first.hi), 8);
+            if (ver == nerdle::kPolicyFormatVer1) {
+                wf.write(reinterpret_cast<const char*>(&e.first.w[0]), 8);
+                wf.write(reinterpret_cast<const char*>(&e.first.w[1]), 8);
+            } else {
+                wf.write(reinterpret_cast<const char*>(e.first.w), 32);
+            }
             wf.write(reinterpret_cast<const char*>(&e.second), 1);
         }
         wf.close();
@@ -338,10 +293,10 @@ int main(int argc, char** argv) {
     }
 
     auto E_first = [&](int g) -> double {
-        std::unordered_map<uint32_t, Mask128> cells;
+        std::unordered_map<uint32_t, PolicyMask> cells;
         for (int s = 0; s < n; s++) {
             uint32_t code = fb[static_cast<size_t>(g)][static_cast<size_t>(s)];
-            Mask128& cm = cells[code];
+            PolicyMask& cm = cells[code];
             cm = set_bit(cm, s);
         }
         double sum = 0.0;
@@ -402,7 +357,7 @@ int main(int argc, char** argv) {
         std::vector<int> steps_for(static_cast<size_t>(n));
 
         for (int t = 0; t < n; t++) {
-            Mask128 mask = full;
+            PolicyMask mask = full;
             int steps = 0;
             while (true) {
                 int g = optimal_guess_index(mask);
@@ -410,7 +365,7 @@ int main(int argc, char** argv) {
                 if (eqs[static_cast<size_t>(g)] == eqs[static_cast<size_t>(t)])
                     break;
                 uint32_t code = fb[static_cast<size_t>(g)][static_cast<size_t>(t)];
-                Mask128 newmask{};
+                PolicyMask newmask{};
                 for_each_bit(mask, [&](int i) {
                     if (fb[static_cast<size_t>(g)][static_cast<size_t>(i)] == code)
                         newmask = set_bit(newmask, i);
