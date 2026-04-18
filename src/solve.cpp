@@ -8,15 +8,16 @@
  *          ./solve equations_10.txt
  */
 
+#include "nerdle_core.hpp"
+
 #include <cmath>
 #include <fstream>
 #include <iostream>
 #include <string>
-#include <unordered_map>
 #include <vector>
 
-static const unsigned char PLACE_SQ = '\x01';  /* ² internal */
-static const unsigned char PLACE_CB = '\x02';  /* ³ internal */
+static const unsigned char PLACE_SQ = '\x01'; /* ² internal */
+static const unsigned char PLACE_CB = '\x02'; /* ³ internal */
 
 /* Normalize Maxi UTF-8 (² ³) to single-byte so each equation = 10 tiles */
 static std::string normalize_maxi(std::string s) {
@@ -24,8 +25,16 @@ static std::string normalize_maxi(std::string s) {
     out.reserve(16);
     for (size_t i = 0; i < s.size(); i++) {
         if (i + 1 < s.size() && (unsigned char)s[i] == 0xC2) {
-            if ((unsigned char)s[i + 1] == 0xB2) { out += (char)PLACE_SQ; i++; continue; }
-            if ((unsigned char)s[i + 1] == 0xB3) { out += (char)PLACE_CB; i++; continue; }
+            if ((unsigned char)s[i + 1] == 0xB2) {
+                out += (char)PLACE_SQ;
+                i++;
+                continue;
+            }
+            if ((unsigned char)s[i + 1] == 0xB3) {
+                out += (char)PLACE_CB;
+                i++;
+                continue;
+            }
         }
         out += s[i];
     }
@@ -35,49 +44,14 @@ static std::string normalize_maxi(std::string s) {
 static std::string maxi_to_display(const std::string& s) {
     std::string out;
     for (unsigned char c : s) {
-        if (c == PLACE_SQ) out += "\xc2\xb2";
-        else if (c == PLACE_CB) out += "\xc2\xb3";
-        else out += c;
+        if (c == PLACE_SQ)
+            out += "\xc2\xb2";
+        else if (c == PLACE_CB)
+            out += "\xc2\xb3";
+        else
+            out += c;
     }
     return out;
-}
-
-std::string compute_feedback(const std::string& guess, const std::string& solution, int N) {
-    std::string result(N, 'B');
-    int sol_count[256] = {0};
-    for (char c : solution) sol_count[static_cast<unsigned char>(c)]++;
-
-    for (int i = 0; i < N; i++) {
-        if (guess[i] == solution[i]) {
-            result[i] = 'G';
-            sol_count[static_cast<unsigned char>(guess[i])]--;
-        }
-    }
-    for (int i = 0; i < N; i++) {
-        if (result[i] == 'G') continue;
-        char c = guess[i];
-        if (sol_count[static_cast<unsigned char>(c)] > 0) {
-            result[i] = 'P';
-            sol_count[static_cast<unsigned char>(c)]--;
-        }
-    }
-    return result;
-}
-
-double entropy_of_guess(const std::string& guess,
-                        const std::vector<std::string>& candidates, int N) {
-    std::unordered_map<std::string, int> pattern_count;
-    for (const auto& sol : candidates) {
-        std::string fb = compute_feedback(guess, sol, N);
-        pattern_count[fb]++;
-    }
-    double total = static_cast<double>(candidates.size());
-    double h = 0.0;
-    for (const auto& kv : pattern_count) {
-        double p = kv.second / total;
-        h -= p * std::log2(p);
-    }
-    return h;
 }
 
 int main(int argc, char** argv) {
@@ -105,7 +79,10 @@ int main(int argc, char** argv) {
     /* Detect Maxi (UTF-8 ²³): normalize to 10 single-byte tiles */
     bool is_maxi = false;
     for (unsigned char c : equations[0]) {
-        if (c == 0xC2) { is_maxi = true; break; }
+        if (c == 0xC2) {
+            is_maxi = true;
+            break;
+        }
     }
     if (is_maxi) {
         for (auto& eq : equations) eq = normalize_maxi(eq);
@@ -123,19 +100,27 @@ int main(int argc, char** argv) {
         }
     }
 
+    std::vector<size_t> all_idx(equations.size());
+    for (size_t i = 0; i < equations.size(); i++) all_idx[i] = i;
+
     std::string best;
     double best_h = -1.0;
+    std::vector<int> hist;
 
 #ifdef _OPENMP
 #pragma omp parallel
     {
+        std::vector<int> local_hist;
         double local_best_h = -1.0;
         std::string local_best;
 #pragma omp for schedule(dynamic, 8)
         for (size_t i = 0; i < equations.size(); i++) {
-            double h = entropy_of_guess(equations[i], equations, N);
-            if (h > local_best_h) {
-                local_best_h = h;
+            double H, sum_sq;
+            nerdle::entropy_and_partitions(equations[i].c_str(), equations, all_idx, N, local_hist, H,
+                                           sum_sq);
+            (void)sum_sq;
+            if (H > local_best_h) {
+                local_best_h = H;
                 local_best = equations[i];
             }
         }
@@ -149,17 +134,18 @@ int main(int argc, char** argv) {
     }
 #else
     for (const auto& g : equations) {
-        double h = entropy_of_guess(g, equations, N);
-        if (h > best_h) {
-            best_h = h;
+        double H, sum_sq;
+        nerdle::entropy_and_partitions(g.c_str(), equations, all_idx, N, hist, H, sum_sq);
+        (void)sum_sq;
+        if (H > best_h) {
+            best_h = H;
             best = g;
         }
     }
 #endif
 
     std::cout << "Loaded " << equations.size() << " equations from " << path << "\n";
-    std::cout << "Entropy-optimal first guess: "
-              << (N == 10 ? maxi_to_display(best) : best)
+    std::cout << "Entropy-optimal first guess: " << (N == 10 ? maxi_to_display(best) : best)
               << " (entropy = " << best_h << " bits)\n";
 
     return 0;

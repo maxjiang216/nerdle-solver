@@ -2,24 +2,22 @@
  * Interactive Nerdle player - solver-assisted play for lengths 5-8 and Maxi (10).
  * Play on nerdlegame.com, enter your guess and feedback; we suggest the next guess.
  *
- * Compile: g++ -O3 -std=c++17 -fopenmp -o nerdle nerdle.cpp
+ * Compile: g++ -O3 -std=c++17 -o nerdle nerdle.cpp
  * Run:     ./nerdle --len 6     # mini
  *          ./nerdle --len 8     # classic
  *          ./nerdle --len 10    # maxi
  */
 
-#include <cmath>
-#include <cstdlib>
-#include <ctime>
+#include "nerdle_core.hpp"
+
 #include <fstream>
 #include <iostream>
+#include <random>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
 
-constexpr int SEARCH_CAP = 300;
-constexpr size_t ENTROPY_SAMPLE = 30000;  /* Subsample candidates when larger for speed */
 constexpr int MAX_TRIES = 6;
 
 static const unsigned char PLACE_SQ = '\x01';
@@ -38,8 +36,16 @@ static std::string normalize_maxi(std::string s) {
     out.reserve(16);
     for (size_t i = 0; i < s.size(); i++) {
         if (i + 1 < s.size() && (unsigned char)s[i] == 0xC2) {
-            if ((unsigned char)s[i + 1] == 0xB2) { out += (char)PLACE_SQ; i++; continue; }
-            if ((unsigned char)s[i + 1] == 0xB3) { out += (char)PLACE_CB; i++; continue; }
+            if ((unsigned char)s[i + 1] == 0xB2) {
+                out += (char)PLACE_SQ;
+                i++;
+                continue;
+            }
+            if ((unsigned char)s[i + 1] == 0xB3) {
+                out += (char)PLACE_CB;
+                i++;
+                continue;
+            }
         }
         out += s[i];
     }
@@ -49,9 +55,12 @@ static std::string normalize_maxi(std::string s) {
 static std::string maxi_to_display(const std::string& s) {
     std::string out;
     for (unsigned char c : s) {
-        if (c == PLACE_SQ) out += "\xc2\xb2";
-        else if (c == PLACE_CB) out += "\xc2\xb3";
-        else out += c;
+        if (c == PLACE_SQ)
+            out += "\xc2\xb2";
+        else if (c == PLACE_CB)
+            out += "\xc2\xb3";
+        else
+            out += c;
     }
     return out;
 }
@@ -60,110 +69,6 @@ static std::string maxi_to_display(const std::string& s) {
 static std::string normalize_input(const std::string& s, bool is_maxi) {
     if (!is_maxi) return s;
     return normalize_maxi(s);
-}
-
-/* Feedback rules: G = right char right place. For each char, N = remaining in solution after greens;
-   the leftmost N non-green occurrences in guess get P, the rest get B. */
-std::string compute_feedback(const std::string& guess, const std::string& solution, int N) {
-    std::string result(N, 'B');
-    int remaining[256] = {0};
-    for (char c : solution) remaining[static_cast<unsigned char>(c)]++;
-
-    /* Greens first: exact matches consume from remaining */
-    for (int i = 0; i < N; i++) {
-        if (guess[i] == solution[i]) {
-            result[i] = 'G';
-            remaining[static_cast<unsigned char>(guess[i])]--;
-        }
-    }
-
-    /* Leftmost N non-green occurrences of each char get P, rest stay B */
-    for (int i = 0; i < N; i++) {
-        if (result[i] == 'G') continue;
-        unsigned char c = static_cast<unsigned char>(guess[i]);
-        if (remaining[c] > 0) {
-            result[i] = 'P';
-            remaining[c]--;
-        }
-    }
-    return result;
-}
-
-bool is_consistent(const std::string& candidate, const std::string& guess,
-                   const std::string& feedback, int N) {
-    return compute_feedback(guess, candidate, N) == feedback;
-}
-
-/* Entropy over indices; subsample if large for interactive speed */
-double entropy_of_guess(const std::string& guess,
-                       const std::vector<std::string>& all_eqs,
-                       const std::vector<size_t>& indices, int N) {
-    std::vector<size_t> use;
-    if (indices.size() <= ENTROPY_SAMPLE) {
-        use = indices;
-    } else {
-        size_t step = indices.size() / ENTROPY_SAMPLE;
-        if (step < 1) step = 1;
-        for (size_t i = 0; i < indices.size() && use.size() < ENTROPY_SAMPLE; i += step)
-            use.push_back(indices[i]);
-    }
-    std::unordered_map<std::string, int> pattern_count;
-    for (size_t idx : use) {
-        std::string fb = compute_feedback(guess, all_eqs[idx], N);
-        pattern_count[fb]++;
-    }
-    double total = static_cast<double>(use.size());
-    double h = 0.0;
-    for (const auto& kv : pattern_count) {
-        double p = kv.second / total;
-        h -= p * std::log2(p);
-    }
-    return h;
-}
-
-std::string best_guess(const std::vector<std::string>& all_eqs,
-                       const std::vector<size_t>& candidate_indices,
-                       const std::unordered_set<size_t>& candidate_set,
-                       int N) {
-    if (candidate_indices.size() == 0) return "";
-    if (candidate_indices.size() == 1) return all_eqs[candidate_indices[0]];
-
-    std::vector<size_t> pool_indices;
-    size_t n = all_eqs.size();
-    if (n <= (size_t)SEARCH_CAP) {
-        for (size_t i = 0; i < n; i++) pool_indices.push_back(i);
-    } else {
-        /* Prefer candidates in pool when they're few enough */
-        if (candidate_indices.size() <= (size_t)SEARCH_CAP * 2) {
-            pool_indices = candidate_indices;
-            if (pool_indices.size() > (size_t)SEARCH_CAP) {
-                size_t step = pool_indices.size() / SEARCH_CAP;
-                std::vector<size_t> sub;
-                for (size_t i = 0; i < pool_indices.size(); i += step) {
-                    sub.push_back(pool_indices[i]);
-                    if (sub.size() >= (size_t)SEARCH_CAP) break;
-                }
-                pool_indices = std::move(sub);
-            }
-        } else {
-            size_t step = n / SEARCH_CAP;
-            for (size_t i = 0; i < n && pool_indices.size() < (size_t)SEARCH_CAP; i += step)
-                pool_indices.push_back(i);
-        }
-    }
-
-    size_t best_idx = pool_indices[0];
-    double best_h = -1.0;
-    for (size_t idx : pool_indices) {
-        double h = entropy_of_guess(all_eqs[idx], all_eqs, candidate_indices, N);
-        bool is_cand = candidate_set.count(idx) > 0;
-        bool best_is_cand = candidate_set.count(best_idx) > 0;
-        if (h > best_h || (h == best_h && is_cand && !best_is_cand)) {
-            best_h = h;
-            best_idx = idx;
-        }
-    }
-    return all_eqs[best_idx];
 }
 
 int main(int argc, char** argv) {
@@ -203,7 +108,11 @@ int main(int argc, char** argv) {
         for (auto& eq : equations) eq = normalize_maxi(eq);
     }
 
-    std::string mode = (N == 5) ? "Micro" : (N == 6) ? "Mini" : (N == 7) ? "Midi" : (N == 8) ? "Classic" : "Maxi";
+    std::mt19937 rng(std::random_device{}());
+    std::vector<int> hist;
+
+    std::string mode =
+        (N == 5) ? "Micro" : (N == 6) ? "Mini" : (N == 7) ? "Midi" : (N == 8) ? "Classic" : "Maxi";
     std::cout << "\n╔═══════════════════════════════╗\n";
     std::cout << "║   N E R D L E   " << mode << std::string(7 - mode.size(), ' ') << "║\n";
     std::cout << "║   " << N << " tiles · " << MAX_TRIES << " tries              ║\n";
@@ -221,7 +130,8 @@ int main(int argc, char** argv) {
     };
 
     for (int turn = 1; turn <= MAX_TRIES; turn++) {
-        std::cout << "Guess " << turn << "/" << MAX_TRIES << "  (" << candidates.size() << " candidates)\n";
+        std::cout << "Guess " << turn << "/" << MAX_TRIES << "  (" << candidates.size()
+                  << " candidates)\n";
         std::cout << "  Suggested: " << display(guess) << "\n";
         std::cout << "  Your guess (Enter=suggested): ";
         std::string user_guess;
@@ -256,7 +166,7 @@ int main(int argc, char** argv) {
         std::vector<size_t> next_candidates;
         std::unordered_set<size_t> next_set;
         for (size_t idx : candidates) {
-            if (is_consistent(equations[idx], guess, feedback, N)) {
+            if (nerdle::is_consistent_feedback_string(equations[idx], guess, feedback.c_str(), N)) {
                 next_candidates.push_back(idx);
                 next_set.insert(idx);
             }
@@ -269,7 +179,7 @@ int main(int argc, char** argv) {
             return 1;
         }
 
-        guess = best_guess(equations, candidates, candidate_set, N);
+        guess = nerdle::best_guess_v2(equations, candidates, candidate_set, N, hist, rng);
         std::cout << "\n";
     }
 
