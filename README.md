@@ -9,6 +9,7 @@ Entropy-based solver for [Nerdle](https://www.nerdlegame.com/), [Binerdle](https
 ```
 nerdle_solver/
 ├── src/                  # C++ and Python source
+│   └── nerdle_core.hpp   # Shared plain-Nerdle: packed feedback, entropy, v1/v2 selectors
 ├── data/                 # Equation files (generated)
 ├── Makefile
 └── README.md
@@ -54,6 +55,8 @@ make                           # build C++ tools
 | Generate equations | `./generate --len N` or `./generate_maxi` |
 | Best first guess | `./solve data/equations_N.txt` |
 | Nerdle benchmark | `./bench_nerdle data/equations_N.txt` |
+| Exact min E[guesses] (uniform prior) | `./optimal_expected data/equations_5.txt` (add `--no-simulate` to skip guess-count distribution) |
+| Trace optimal vs entropy+v2 for one target | `./trace_target data/equations_5.txt '9*1=9'` |
 | Interactive Nerdle | `./nerdle --len 5\|6\|7\|8\|10` |
 | Binerdle optimal 1st | `./solve_binerdle data/equations_6.txt` |
 | Binerdle interactive | `./binerdle --len 6` or `--len 8` |
@@ -81,6 +84,14 @@ make                           # build C++ tools
 ```bash
 python src/generate.py --len 5
 ```
+
+**Micro Bellman policy** (`nerdle --len 5`, `bench_nerdle`): after generating `data/equations_5.txt`, build the lookup table used for exact min-expected-guess play:
+
+```bash
+make micro_policy
+```
+
+Use **`--strategy bellman`** (default for Micro when the file exists), **`--strategy entropy`** for the v2 selector, or **`--strategy partition`**: among remaining candidate equations, maximize the number of distinct feedback patterns on **S**; among ties, maximize **P(solve within the tries left)** (uniform prior on **S**), then minimize **E[guesses]** under the same partition policy (computed recursively). Smallest index last. For pools larger than 128 equations, only the partition + index rule is used (no DP).
 
 **Options:**
 - `--len N` — Equation length, 5-8 (default: 8)
@@ -124,6 +135,7 @@ Solver-assisted play for single-equation Nerdle. Play on [nerdlegame.com](https:
 ./nerdle --len 7     # midi
 ./nerdle --len 8     # classic
 ./nerdle --len 10    # maxi (²³ brackets)
+./nerdle --len 5 --strategy partition   # greedy max-feedback-partition (any length)
 ```
 
 Press Enter to use the suggested guess, or type your own. Type `y` when you solve it. Requires `data/equations_N.txt` (run `./generate --len N` or `./generate_maxi` first).
@@ -159,10 +171,13 @@ Enter feedback for each of the 4 equations (G/P/B or `y` if correct). Recommende
 
 ```bash
 ./bench_nerdle data/equations_8.txt
+./bench_nerdle data/equations_8.txt --selector v2   # default is v2
 ./bench_nerdle data/equations_10.txt --sample 5000   # Maxi: sample 5k (full ~1.8M takes hours)
+./bench_nerdle data/equations_8.txt --selector v1    # legacy: 300-guess pool, 1-ply entropy only
+./bench_nerdle data/equations_5.txt --strategy partition
 ```
 
-Simulates the solver against all equations and reports mean/max guesses and distribution.
+Simulates the solver against all equations and reports mean/max guesses and distribution. **`--strategy`**: Micro defaults to **Bellman** when `data/optimal_policy_5.bin` exists; otherwise **entropy** with **`--selector v2`** (default): full guess pool (or candidate ∪ random sample for Maxi-sized sets), 1-ply entropy plus a small bonus when the guess is still a candidate, then a 2-ply tiebreak on the top finalists. **`v1`** reproduces the older subsampled-pool benchmark for comparison. **`--strategy partition`** uses the rule above (recursive P / EV tie-breaks when the equation pool has ≤128 entries).
 
 ---
 
@@ -224,7 +239,7 @@ make clean        # remove binaries
 
 | Length | First guess | Entropy |
 |--------|-------------|---------|
-| 5 (micro) | 4-1=3 | 4.54 bits |
+| 5 (micro) | 3+2=5 | Precomputed Bellman policy (`data/optimal_policy_5.bin`; see `make micro_policy`) |
 | 6 (mini) | 4*7=28 | 5.82 bits |
 | 7 (midi) | 6+18=24 | 8.15 bits |
 | 8 (classic) | 48-32=16 | 9.78 bits |
@@ -247,17 +262,17 @@ make clean        # remove binaries
 
 Run `./solve_quadnerdle data/equations_8.txt` to recompute. **All 4 equations are always distinct** (space = P(n,4) = n×(n-1)×(n-2)×(n-3), not n⁴). Uses **adaptive strategy** with stratified sampling and a 200k-quad tiebreaker when the top 2 are within 0.02 bits. Use `--no-stratify` for plain random sampling.
 
-**Benchmark stats (lengths 5–10):**
+**Benchmark stats (lengths 5–10):** `bench_nerdle` uses **precomputed Bellman** for Micro (len 5) when `data/optimal_policy_5.bin` is present; other lengths use **v2** (full equation pool + 2-ply; see `src/nerdle_core.hpp`).
 
 | Length | EV guesses | 2 guesses | 3 guesses | 4 guesses | 5 guesses |
 |--------|------------|-----------|-----------|-----------|-----------|
-| 5 (micro) | 3.00 | 19.7% | 61.4% | 15.0% | 3.1% |
+| 5 (micro) | 2.94 | 23.6% | 57.5% | 16.5% | 1.6% |
 | 6 (mini) | 2.64 | 35.4% | 63.6% | 0.5% | 0% |
-| 7 (midi) | 3.20 | 3.7% | 72.7% | 23.4% | 0.2% |
-| 8 (classic) | 3.17 | 3.5% | 76.6% | 19.9% | 0.1% |
-| 10 (maxi) | 3.65 | 0.2% | 37.6% | 59.0% | 3.2% |
+| 7 (midi) | 3.09 | 6.6% | 78.1% | 15.2% | 0.03% |
+| 8 (classic) | 3.03 | 7.6% | 81.4% | 11.0% | 0.006% |
+| 10 (maxi) | ~3.43 | — | — | — | — |
 
-*Maxi stats from 5k-sample benchmark (`./bench_nerdle data/equations_10.txt --sample 5000`). Full benchmark ~1.8M equations would take hours.*
+*Rows 5–8: full equation lists. Maxi: 500-equation random sample (`--selector v2`; sampling uses `--sample` with fixed shuffle seed 42). A 5k-sample v1 run on Maxi was ~3.65 EV; v2 is slower on Maxi—use `--sample`.*
 
 ---
 

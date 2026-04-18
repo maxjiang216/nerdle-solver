@@ -7,11 +7,12 @@
  * Run:     ./solve_adaptive equations_10.txt
  */
 
+#include "nerdle_core.hpp"
+
 #include <cmath>
 #include <fstream>
 #include <iostream>
 #include <string>
-#include <unordered_map>
 #include <vector>
 #ifdef _OPENMP
 #include <omp.h>
@@ -41,54 +42,6 @@ static std::string maxi_to_display(const std::string& s) {
         else out += c;
     }
     return out;
-}
-
-std::string compute_feedback(const std::string& guess, const std::string& solution, int N) {
-    std::string result(N, 'B');
-    int sol_count[256] = {0};
-    for (char c : solution) sol_count[static_cast<unsigned char>(c)]++;
-
-    for (int i = 0; i < N; i++) {
-        if (guess[i] == solution[i]) {
-            result[i] = 'G';
-            sol_count[static_cast<unsigned char>(guess[i])]--;
-        }
-    }
-    for (int i = 0; i < N; i++) {
-        if (result[i] == 'G') continue;
-        char c = guess[i];
-        if (sol_count[static_cast<unsigned char>(c)] > 0) {
-            result[i] = 'P';
-            sol_count[static_cast<unsigned char>(c)]--;
-        }
-    }
-    return result;
-}
-
-/* Entropy and its variance (plug-in estimator). Var(H) ≈ (1/n)[E[(log p)^2] - H^2] */
-void entropy_and_var(const std::string& guess,
-                     const std::vector<std::string>& solutions,
-                     const std::vector<size_t>& indices, int N,
-                     double& out_h, double& out_var) {
-    std::unordered_map<std::string, int> pattern_count;
-    for (size_t idx : indices) {
-        std::string fb = compute_feedback(guess, solutions[idx], N);
-        pattern_count[fb]++;
-    }
-    double n = static_cast<double>(indices.size());
-    if (n <= 1) { out_h = 0; out_var = 0; return; }
-    double h = 0.0, sum_log_sq = 0.0;
-    for (const auto& kv : pattern_count) {
-        double p = kv.second / n;
-        if (p > 0) {
-            double lp = std::log2(p);
-            h -= p * lp;
-            sum_log_sq += p * lp * lp;
-        }
-    }
-    out_h = h;
-    out_var = (sum_log_sq - h * h) / n;  /* can be slightly negative from sampling */
-    if (out_var < 0) out_var = 0;
 }
 
 int main(int argc, char** argv) {
@@ -158,7 +111,9 @@ int main(int argc, char** argv) {
 #pragma omp parallel for schedule(dynamic, 32)
 #endif
     for (size_t c = 0; c < candidates.size(); c++) {
-        entropy_and_var(equations[candidates[c]], equations, sol1, N, h_var[c].first, h_var[c].second);
+        std::vector<int> local_hist;
+        nerdle::entropy_and_var_from_indices(equations[candidates[c]].c_str(), equations, sol1, N,
+                                             local_hist, h_var[c].first, h_var[c].second);
     }
 
     double best_h = -1;
@@ -198,7 +153,9 @@ int main(int argc, char** argv) {
 #pragma omp parallel for schedule(dynamic, 32)
 #endif
     for (size_t c = 0; c < candidates.size(); c++) {
-        entropy_and_var(equations[candidates[c]], equations, sol2, N, h_var[c].first, h_var[c].second);
+        std::vector<int> local_hist;
+        nerdle::entropy_and_var_from_indices(equations[candidates[c]].c_str(), equations, sol2, N,
+                                             local_hist, h_var[c].first, h_var[c].second);
     }
 
     best_h = -1;
@@ -238,7 +195,9 @@ int main(int argc, char** argv) {
     size_t best_idx = candidates[0];
     for (size_t c : candidates) {
         double h, v;
-        entropy_and_var(equations[c], equations, sol3, N, h, v);
+        std::vector<int> local_hist;
+        nerdle::entropy_and_var_from_indices(equations[c].c_str(), equations, sol3, N, local_hist, h,
+                                               v);
         if (h > final_best_h) {
             final_best_h = h;
             best_idx = c;
