@@ -3,11 +3,12 @@
  *
  * Compile: g++ -O3 -std=c++17 -fopenmp -o bench_nerdle bench_nerdle.cpp
  * Run:     ./bench_nerdle equations_5.txt
- *          ./bench_nerdle equations_8.txt [--selector v1|v2] [--sample N]
+ *          ./bench_nerdle equations_8.txt [--selector v1|v2] [--strategy bellman|partition|entropy] [--sample N]
  *
  * Uses OpenMP for parallel execution. Without -fopenmp, runs single-threaded.
  */
 
+#include "micro_policy.hpp"
 #include "nerdle_core.hpp"
 
 #include <algorithm>
@@ -48,7 +49,7 @@ static std::string normalize_maxi(std::string s) {
 
 /* Hardcoded first guesses (must exist in equation set) */
 static const std::unordered_map<int, std::string> FIRST_GUESS = {
-    {5, "4-1=3"},
+    {5, "3+2=5"},
     {6, "4*7=28"},
     {7, "6+18=24"},
     {8, "48-32=16"},
@@ -56,6 +57,8 @@ static const std::unordered_map<int, std::string> FIRST_GUESS = {
 };
 
 enum class Selector { V1, V2 };
+
+enum class PlayStrategy { Bellman, Partition, Entropy };
 
 static std::string pick_guess(const std::vector<std::string>& all_eqs,
                               const std::vector<size_t>& candidate_indices,
@@ -69,13 +72,19 @@ static std::string pick_guess(const std::vector<std::string>& all_eqs,
 /* Returns number of guesses (1-6 or 1-7) or 7/8 if failed */
 static int solve_one(const std::string& solution, const std::vector<std::string>& all_eqs,
                      const std::string& first_guess, int N, int max_tries, Selector sel,
-                     uint64_t rng_seed) {
+                     PlayStrategy strat, uint64_t rng_seed,
+                     const std::unordered_map<nerdle::MicroMask128, uint8_t, nerdle::MicroMask128Hash>*
+                         micro_policy) {
     std::mt19937 rng(static_cast<std::mt19937::result_type>(rng_seed));
     std::vector<size_t> candidates;
     for (size_t i = 0; i < all_eqs.size(); i++) candidates.push_back(i);
     std::unordered_set<size_t> candidate_set(candidates.begin(), candidates.end());
 
-    std::string guess = first_guess;
+    std::string guess;
+    if (strat == PlayStrategy::Partition)
+        guess = nerdle::best_guess_partition_policy(all_eqs, candidates, N, max_tries);
+    else
+        guess = first_guess;
     std::vector<int> hist;
 
     for (int turn = 1; turn <= max_tries; turn++) {
@@ -97,7 +106,18 @@ static int solve_one(const std::string& solution, const std::vector<std::string>
 
         if (candidates.empty()) return max_tries + 1;
 
-        guess = pick_guess(all_eqs, candidates, candidate_set, N, hist, rng, sel);
+        if (strat == PlayStrategy::Partition) {
+            guess = nerdle::best_guess_partition_policy(all_eqs, candidates, N, max_tries - turn);
+        } else if (strat == PlayStrategy::Bellman && N == 5 && micro_policy &&
+                   !micro_policy->empty()) {
+            std::string pg = nerdle::guess_from_micro_policy(*micro_policy, all_eqs, candidates);
+            if (!pg.empty())
+                guess = pg;
+            else
+                guess = pick_guess(all_eqs, candidates, candidate_set, N, hist, rng, sel);
+        } else {
+            guess = pick_guess(all_eqs, candidates, candidate_set, N, hist, rng, sel);
+        }
     }
     return max_tries + 1;
 }
@@ -105,12 +125,15 @@ static int solve_one(const std::string& solution, const std::vector<std::string>
 int main(int argc, char** argv) {
     if (argc < 2) {
         std::cerr << "Usage: " << (argc ? argv[0] : "bench_nerdle")
-                  << " <equations.txt> [--selector v1|v2] [--sample N]\n";
+                  << " <equations.txt> [--selector v1|v2] [--strategy bellman|partition|entropy] "
+                     "[--sample N]\n";
         return 1;
     }
     std::string path;
     size_t sample_size = 0;
     Selector sel = Selector::V2;
+    bool strategy_set = false;
+    PlayStrategy strat = PlayStrategy::Entropy;
     for (int i = 1; i < argc; i++) {
         std::string arg = argv[i];
         if (arg == "--sample" && i + 1 < argc) {
@@ -121,13 +144,27 @@ int main(int argc, char** argv) {
                 sel = Selector::V1;
             else
                 sel = Selector::V2;
+        } else if (arg == "--strategy" && i + 1 < argc) {
+            std::string s = argv[++i];
+            strategy_set = true;
+            if (s == "bellman")
+                strat = PlayStrategy::Bellman;
+            else if (s == "partition")
+                strat = PlayStrategy::Partition;
+            else if (s == "entropy" || s == "v2")
+                strat = PlayStrategy::Entropy;
+            else {
+                std::cerr << "--strategy must be bellman, partition, or entropy\n";
+                return 1;
+            }
         } else if (arg[0] != '-') {
             path = arg;
         }
     }
     if (path.empty()) {
         std::cerr << "Usage: " << (argc ? argv[0] : "bench_nerdle")
-                  << " <equations.txt> [--selector v1|v2] [--sample N]\n";
+                  << " <equations.txt> [--selector v1|v2] [--strategy bellman|partition|entropy] "
+                     "[--sample N]\n";
         return 1;
     }
 
@@ -175,6 +212,35 @@ int main(int argc, char** argv) {
     int max_tries = (N == 10) ? MAXI_TRIES : 6;
     std::string first_guess = FIRST_GUESS.count(N) ? FIRST_GUESS.at(N) : equations[0];
 
+    std::unordered_map<nerdle::MicroMask128, uint8_t, nerdle::MicroMask128Hash> micro_policy;
+    bool micro_policy_ok = false;
+    if (N == 5 && strat != PlayStrategy::Partition) {
+        micro_policy_ok =
+            nerdle::load_micro_policy("data/optimal_policy_5.bin", static_cast<int>(equations.size()),
+                                      micro_policy);
+    }
+
+    if (!strategy_set) {
+        if (N == 5 && micro_policy_ok)
+            strat = PlayStrategy::Bellman;
+        else
+            strat = PlayStrategy::Entropy;
+    } else if (strat == PlayStrategy::Bellman && N != 5) {
+        std::cerr << "bellman strategy only applies to Micro (5-tile); using entropy.\n";
+        strat = PlayStrategy::Entropy;
+    } else if (strat == PlayStrategy::Bellman && N == 5 && !micro_policy_ok) {
+        std::cerr << "Bellman policy missing; using entropy.\n";
+        strat = PlayStrategy::Entropy;
+    }
+
+    if (strat == PlayStrategy::Bellman && micro_policy_ok) {
+        std::vector<size_t> all_idx(equations.size());
+        for (size_t i = 0; i < equations.size(); i++) all_idx[i] = i;
+        std::string pg = nerdle::guess_from_micro_policy(micro_policy, equations, all_idx);
+        if (!pg.empty())
+            first_guess = pg;
+    }
+
     std::vector<size_t> indices;
     if (sample_size > 0 && sample_size < equations.size()) {
         indices.resize(equations.size());
@@ -191,8 +257,17 @@ int main(int argc, char** argv) {
     std::cout << "Benchmarking " << n << " equations";
     if (sample_size > 0 && sample_size < equations.size())
         std::cout << " (sampled from " << equations.size() << ")";
-    std::cout << " (" << N << "-tile, " << max_tries << " tries, selector "
-              << (sel == Selector::V1 ? "v1" : "v2") << ")...\n";
+    std::cout << " (" << N << "-tile, " << max_tries << " tries";
+    if (strat == PlayStrategy::Partition)
+        std::cout << ", strategy partition (max classes, then P(win), min E[guesses] recursively)";
+    else if (strat == PlayStrategy::Bellman)
+        std::cout << ", strategy Bellman (Micro precomputed policy)";
+    else {
+        std::cout << ", strategy entropy, selector " << (sel == Selector::V1 ? "v1" : "v2");
+        if (N == 5 && !micro_policy_ok)
+            std::cout << ", Micro policy missing";
+    }
+    std::cout << ")...\n";
 
     std::vector<int> results(n, 0);
 
@@ -201,8 +276,9 @@ int main(int argc, char** argv) {
 #endif
     for (size_t i = 0; i < n; i++) {
         uint64_t seed = 0x9E3779B97F4A7C15ULL ^ (uint64_t)indices[i] * 1315423911ULL;
-        results[i] = solve_one(equations[indices[i]], equations, first_guess, N, max_tries, sel,
-                               seed);
+        results[i] =
+            solve_one(equations[indices[i]], equations, first_guess, N, max_tries, sel, strat,
+                      seed, micro_policy_ok ? &micro_policy : nullptr);
     }
 
     // Aggregate stats

@@ -12,6 +12,7 @@
 #include <limits>
 #include <random>
 #include <string>
+#include <unordered_map>
 #include <unordered_set>
 #include <vector>
 
@@ -550,6 +551,250 @@ inline std::string best_guess_v2_multi(const std::vector<std::string>& all_eqs,
         }
     }
     return all_eqs[best_idx];
+}
+
+/** Max equation count for which partition policy uses bitmask DP (Micro ≤127). */
+constexpr int PARTITION_POLICY_MAX_EQ = 128;
+
+struct PartitionPolicyMemoKey {
+    unsigned __int128 mask;
+    uint8_t k;
+    bool operator==(const PartitionPolicyMemoKey& o) const { return mask == o.mask && k == o.k; }
+};
+
+struct PartitionPolicyMemoKeyHash {
+    size_t operator()(const PartitionPolicyMemoKey& x) const {
+        uint64_t lo = static_cast<uint64_t>(x.mask);
+        uint64_t hi = static_cast<uint64_t>(x.mask >> 64);
+        return lo ^ (hi * 0x9E3779B97F4A7C15ULL) ^ (static_cast<size_t>(x.k) << 1);
+    }
+};
+
+struct PartitionPolicyVal {
+    double p_success;
+    double ev_guesses;
+};
+
+inline int popcount_u128(unsigned __int128 m) {
+    return __builtin_popcountll(static_cast<uint64_t>(m)) +
+           __builtin_popcountll(static_cast<uint64_t>(m >> 64));
+}
+
+inline unsigned __int128 mask_from_candidate_indices(const std::vector<size_t>& idxs) {
+    unsigned __int128 m = 0;
+    for (size_t i : idxs)
+        m |= (unsigned __int128)1 << i;
+    return m;
+}
+
+inline int partition_diversity_for_guess(unsigned __int128 mask, size_t g,
+                                         const std::vector<std::string>& all_eqs, int N) {
+    std::unordered_set<uint32_t> seen;
+    for (int bi = 0; bi < PARTITION_POLICY_MAX_EQ; bi++) {
+        if (((mask >> bi) & 1) == 0)
+            continue;
+        seen.insert(compute_feedback_packed(all_eqs[g].c_str(), all_eqs[static_cast<size_t>(bi)].c_str(),
+                                            N));
+    }
+    return static_cast<int>(seen.size());
+}
+
+inline unsigned __int128 filter_by_feedback(unsigned __int128 mask, size_t g, size_t s,
+                                          const std::vector<std::string>& all_eqs, int N) {
+    uint32_t target = compute_feedback_packed(all_eqs[g].c_str(), all_eqs[s].c_str(), N);
+    unsigned __int128 out = 0;
+    for (int bi = 0; bi < PARTITION_POLICY_MAX_EQ; bi++) {
+        if (((mask >> bi) & 1) == 0)
+            continue;
+        size_t s2 = static_cast<size_t>(bi);
+        if (compute_feedback_packed(all_eqs[g].c_str(), all_eqs[s2].c_str(), N) == target)
+            out |= (unsigned __int128)1 << bi;
+    }
+    return out;
+}
+
+struct PartitionPolicyCtx {
+    const std::vector<std::string>& all_eqs;
+    int N;
+    std::unordered_map<PartitionPolicyMemoKey, PartitionPolicyVal, PartitionPolicyMemoKeyHash> memo;
+};
+
+inline PartitionPolicyVal partition_policy_evaluate(PartitionPolicyCtx& ctx, unsigned __int128 mask,
+                                                    int k);
+
+inline double partition_policy_p_after_guess(PartitionPolicyCtx& ctx, unsigned __int128 mask, size_t g,
+                                             int k) {
+    if (k < 1)
+        return 0.0;
+    int sz = popcount_u128(mask);
+    if (sz == 0)
+        return 0.0;
+    double p = 0.0;
+    for (int bi = 0; bi < PARTITION_POLICY_MAX_EQ; bi++) {
+        if (((mask >> bi) & 1) == 0)
+            continue;
+        size_t s = static_cast<size_t>(bi);
+        if (s == g) {
+            p += 1.0 / static_cast<double>(sz);
+        } else {
+            unsigned __int128 child = filter_by_feedback(mask, g, s, ctx.all_eqs, ctx.N);
+            PartitionPolicyVal v = partition_policy_evaluate(ctx, child, k - 1);
+            p += (1.0 / static_cast<double>(sz)) * v.p_success;
+        }
+    }
+    return p;
+}
+
+inline double partition_policy_ev_after_guess(PartitionPolicyCtx& ctx, unsigned __int128 mask,
+                                              size_t g, int k) {
+    if (k < 1)
+        return 0.0;
+    int sz = popcount_u128(mask);
+    if (sz == 0)
+        return 0.0;
+    double e = 0.0;
+    for (int bi = 0; bi < PARTITION_POLICY_MAX_EQ; bi++) {
+        if (((mask >> bi) & 1) == 0)
+            continue;
+        size_t s = static_cast<size_t>(bi);
+        if (s == g) {
+            e += 1.0 / static_cast<double>(sz);
+        } else {
+            unsigned __int128 child = filter_by_feedback(mask, g, s, ctx.all_eqs, ctx.N);
+            PartitionPolicyVal v = partition_policy_evaluate(ctx, child, k - 1);
+            e += (1.0 / static_cast<double>(sz)) * (1.0 + v.ev_guesses);
+        }
+    }
+    return e;
+}
+
+inline PartitionPolicyVal partition_policy_evaluate(PartitionPolicyCtx& ctx, unsigned __int128 mask,
+                                                  int k) {
+    int sz = popcount_u128(mask);
+    if (sz == 0)
+        return {0.0, 0.0};
+    if (k < 1)
+        return {0.0, 0.0};
+    if (sz == 1) {
+        return {1.0, 1.0};
+    }
+
+    PartitionPolicyMemoKey key{mask, static_cast<uint8_t>(k)};
+    auto it = ctx.memo.find(key);
+    if (it != ctx.memo.end())
+        return it->second;
+
+    int best_part = -1;
+    std::vector<int> cand_g;
+    for (int bi = 0; bi < PARTITION_POLICY_MAX_EQ; bi++) {
+        if (((mask >> bi) & 1) == 0)
+            continue;
+        size_t g = static_cast<size_t>(bi);
+        int pz = partition_diversity_for_guess(mask, g, ctx.all_eqs, ctx.N);
+        if (pz > best_part) {
+            best_part = pz;
+            cand_g.clear();
+            cand_g.push_back(bi);
+        } else if (pz == best_part) {
+            cand_g.push_back(bi);
+        }
+    }
+
+    constexpr double eps = 1e-12;
+    double best_p = -1.0;
+    double best_ev = std::numeric_limits<double>::infinity();
+    int best_g = cand_g[0];
+    for (int bi : cand_g) {
+        size_t g = static_cast<size_t>(bi);
+        double pg = partition_policy_p_after_guess(ctx, mask, g, k);
+        double eg = partition_policy_ev_after_guess(ctx, mask, g, k);
+        if (pg > best_p + eps || (std::abs(pg - best_p) <= eps && eg < best_ev - eps) ||
+            (std::abs(pg - best_p) <= eps && std::abs(eg - best_ev) <= eps && bi < best_g)) {
+            best_p = pg;
+            best_ev = eg;
+            best_g = bi;
+        }
+    }
+
+    double final_ev = partition_policy_ev_after_guess(ctx, mask, static_cast<size_t>(best_g), k);
+    PartitionPolicyVal out{best_p, final_ev};
+    ctx.memo[key] = out;
+    return out;
+}
+
+/**
+ * Partition strategy (candidates only): maximize distinct feedback classes on S, then
+ * lexicographically maximize P(solve within tries_remaining), minimize E[guesses] under the
+ * same policy (uniform prior on S). Tie-break: smallest index.
+ * Uses exact DP when all_eqs.size() <= PARTITION_POLICY_MAX_EQ; otherwise partition size + index.
+ */
+inline std::string best_guess_partition_policy(const std::vector<std::string>& all_eqs,
+                                             const std::vector<size_t>& candidate_indices, int N,
+                                             int tries_remaining) {
+    if (candidate_indices.empty())
+        return "";
+    if (candidate_indices.size() == 1)
+        return all_eqs[candidate_indices[0]];
+    if (tries_remaining < 1)
+        return all_eqs[candidate_indices[0]];
+
+    if (static_cast<int>(all_eqs.size()) > PARTITION_POLICY_MAX_EQ) {
+        size_t best_g = candidate_indices[0];
+        int best_score = -1;
+        for (size_t gi : candidate_indices) {
+            std::unordered_set<uint32_t> seen;
+            for (size_t si : candidate_indices) {
+                seen.insert(
+                    compute_feedback_packed(all_eqs[gi].c_str(), all_eqs[si].c_str(), N));
+            }
+            int sc = static_cast<int>(seen.size());
+            if (sc > best_score || (sc == best_score && gi < best_g)) {
+                best_score = sc;
+                best_g = gi;
+            }
+        }
+        return all_eqs[best_g];
+    }
+
+    unsigned __int128 mask = mask_from_candidate_indices(candidate_indices);
+    PartitionPolicyCtx ctx{all_eqs, N, {}};
+
+    int best_part = -1;
+    std::vector<int> cand_g;
+    for (size_t gi : candidate_indices) {
+        int pz = partition_diversity_for_guess(mask, gi, all_eqs, N);
+        if (pz > best_part) {
+            best_part = pz;
+            cand_g.clear();
+            cand_g.push_back(static_cast<int>(gi));
+        } else if (pz == best_part) {
+            cand_g.push_back(static_cast<int>(gi));
+        }
+    }
+
+    constexpr double eps = 1e-12;
+    double best_p = -1.0;
+    double best_ev = std::numeric_limits<double>::infinity();
+    int best_gi = cand_g[0];
+    for (int bi : cand_g) {
+        size_t g = static_cast<size_t>(bi);
+        double pg = partition_policy_p_after_guess(ctx, mask, g, tries_remaining);
+        double eg = partition_policy_ev_after_guess(ctx, mask, g, tries_remaining);
+        if (pg > best_p + eps || (std::abs(pg - best_p) <= eps && eg < best_ev - eps) ||
+            (std::abs(pg - best_p) <= eps && std::abs(eg - best_ev) <= eps && bi < best_gi)) {
+            best_p = pg;
+            best_ev = eg;
+            best_gi = bi;
+        }
+    }
+    return all_eqs[static_cast<size_t>(best_gi)];
+}
+
+/** @deprecated Use best_guess_partition_policy(..., tries_remaining). */
+inline std::string best_guess_greedy_max_feedback_partition(const std::vector<std::string>& all_eqs,
+                                                            const std::vector<size_t>& candidate_indices,
+                                                            int N, int tries_remaining = 6) {
+    return best_guess_partition_policy(all_eqs, candidate_indices, N, tries_remaining);
 }
 
 } // namespace nerdle

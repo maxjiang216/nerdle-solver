@@ -8,6 +8,7 @@
  *          ./nerdle --len 10    # maxi
  */
 
+#include "micro_policy.hpp"
 #include "nerdle_core.hpp"
 
 #include <fstream>
@@ -24,7 +25,8 @@ static const unsigned char PLACE_SQ = '\x01';
 static const unsigned char PLACE_CB = '\x02';
 
 static const std::unordered_map<int, std::string> FIRST_GUESS = {
-    {5, "4-1=3"},
+    /* Micro: min E[guesses] (uniform prior); tied with 5-1=4; smallest index wins. */
+    {5, "3+2=5"},
     {6, "4*7=28"},
     {7, "6+18=24"},
     {8, "48-32=16"},
@@ -71,18 +73,38 @@ static std::string normalize_input(const std::string& s, bool is_maxi) {
     return normalize_maxi(s);
 }
 
+enum class PlayStrategy { Bellman, Partition, Entropy };
+
 int main(int argc, char** argv) {
     int N = 8;
+    bool strategy_set = false;
+    PlayStrategy strategy = PlayStrategy::Entropy;
     for (int i = 1; i < argc; i++) {
         std::string arg = argv[i];
         if (arg == "--len" && i + 1 < argc) {
             N = std::atoi(argv[++i]);
+        } else if (arg == "--strategy" && i + 1 < argc) {
+            std::string s = argv[++i];
+            strategy_set = true;
+            if (s == "bellman")
+                strategy = PlayStrategy::Bellman;
+            else if (s == "partition")
+                strategy = PlayStrategy::Partition;
+            else if (s == "entropy" || s == "v2")
+                strategy = PlayStrategy::Entropy;
+            else {
+                std::cerr << "--strategy must be bellman, partition, or entropy\n";
+                return 1;
+            }
         }
     }
 
     if (N != 5 && N != 6 && N != 7 && N != 8 && N != 10) {
-        std::cerr << "Usage: ./nerdle --len 5|6|7|8|10\n";
+        std::cerr << "Usage: ./nerdle --len 5|6|7|8|10 [--strategy bellman|partition|entropy]\n";
         std::cerr << "  5=micro, 6=mini, 7=midi, 8=classic, 10=maxi\n";
+        std::cerr << "  bellman: Micro precomputed Bellman (data/optimal_policy_5.bin)\n";
+        std::cerr << "  partition: greedy — candidate that maximizes distinct feedbacks on S\n";
+        std::cerr << "  entropy: v2 selector (default if no Micro policy)\n";
         return 1;
     }
 
@@ -111,6 +133,29 @@ int main(int argc, char** argv) {
     std::mt19937 rng(std::random_device{}());
     std::vector<int> hist;
 
+    std::unordered_map<nerdle::MicroMask128, uint8_t, nerdle::MicroMask128Hash> micro_policy;
+    bool micro_policy_ok = false;
+    if (N == 5 && strategy != PlayStrategy::Partition) {
+        micro_policy_ok =
+            nerdle::load_micro_policy("data/optimal_policy_5.bin", static_cast<int>(equations.size()),
+                                      micro_policy);
+    }
+
+    if (!strategy_set) {
+        if (N == 5 && micro_policy_ok)
+            strategy = PlayStrategy::Bellman;
+        else
+            strategy = PlayStrategy::Entropy;
+    } else if (strategy == PlayStrategy::Bellman && N != 5) {
+        std::cerr << "bellman strategy only applies to Micro (--len 5); using entropy.\n";
+        strategy = PlayStrategy::Entropy;
+    } else if (strategy == PlayStrategy::Bellman && N == 5 && !micro_policy_ok) {
+        std::cerr << "data/optimal_policy_5.bin missing — Bellman unavailable; using entropy. "
+                     "Generate: ./optimal_expected data/equations_5.txt --write-policy "
+                     "data/optimal_policy_5.bin --quiet\n";
+        strategy = PlayStrategy::Entropy;
+    }
+
     std::string mode =
         (N == 5) ? "Micro" : (N == 6) ? "Mini" : (N == 7) ? "Midi" : (N == 8) ? "Classic" : "Maxi";
     std::cout << "\n╔═══════════════════════════════╗\n";
@@ -118,13 +163,32 @@ int main(int argc, char** argv) {
     std::cout << "║   " << N << " tiles · " << MAX_TRIES << " tries              ║\n";
     std::cout << "╚═══════════════════════════════╝\n";
     std::cout << "Play on nerdlegame.com. Enter your guess and feedback (G/P/B).\n";
-    std::cout << "Type 'y' when correct. Loaded " << equations.size() << " equations.\n\n";
+    std::cout << "Type 'y' when correct. Loaded " << equations.size() << " equations.\n";
+    if (strategy == PlayStrategy::Bellman)
+        std::cout << "Strategy: Bellman (EV-optimal, precomputed Micro policy).\n";
+    else if (strategy == PlayStrategy::Partition)
+        std::cout << "Strategy: partition — max feedback classes, then P(win in tries left), "
+                     "min E[guesses] (same policy, recursive).\n";
+    else
+        std::cout << "Strategy: entropy (v2).\n";
+    std::cout << "\n";
 
     std::vector<size_t> candidates;
     for (size_t i = 0; i < equations.size(); i++) candidates.push_back(i);
     std::unordered_set<size_t> candidate_set(candidates.begin(), candidates.end());
 
-    std::string guess = FIRST_GUESS.at(N);
+    std::string guess;
+    if (strategy == PlayStrategy::Partition) {
+        guess = nerdle::best_guess_partition_policy(equations, candidates, N, MAX_TRIES);
+    } else if (strategy == PlayStrategy::Bellman && N == 5 && micro_policy_ok) {
+        std::vector<size_t> all_idx(equations.size());
+        for (size_t i = 0; i < equations.size(); i++) all_idx[i] = i;
+        guess = nerdle::guess_from_micro_policy(micro_policy, equations, all_idx);
+        if (guess.empty())
+            guess = FIRST_GUESS.at(N);
+    } else {
+        guess = FIRST_GUESS.at(N);
+    }
     auto display = [is_maxi](const std::string& s) {
         return is_maxi ? maxi_to_display(s) : s;
     };
@@ -179,7 +243,17 @@ int main(int argc, char** argv) {
             return 1;
         }
 
-        guess = nerdle::best_guess_v2(equations, candidates, candidate_set, N, hist, rng);
+        if (strategy == PlayStrategy::Partition) {
+            guess = nerdle::best_guess_partition_policy(equations, candidates, N, MAX_TRIES - turn);
+        } else if (strategy == PlayStrategy::Bellman && N == 5 && micro_policy_ok) {
+            std::string pg = nerdle::guess_from_micro_policy(micro_policy, equations, candidates);
+            if (!pg.empty())
+                guess = pg;
+            else
+                guess = nerdle::best_guess_v2(equations, candidates, candidate_set, N, hist, rng);
+        } else {
+            guess = nerdle::best_guess_v2(equations, candidates, candidate_set, N, hist, rng);
+        }
         std::cout << "\n";
     }
 
