@@ -9,6 +9,7 @@ Entropy-based solver for [Nerdle](https://www.nerdlegame.com/), [Binerdle](https
 ```
 nerdle_solver/
 ├── src/                  # C++ and Python source
+│   └── nerdle_core.hpp   # Shared plain-Nerdle: packed feedback, entropy, v1/v2 selectors
 ├── data/                 # Equation files (generated)
 ├── Makefile
 └── README.md
@@ -159,10 +160,12 @@ Enter feedback for each of the 4 equations (G/P/B or `y` if correct). Recommende
 
 ```bash
 ./bench_nerdle data/equations_8.txt
+./bench_nerdle data/equations_8.txt --selector v2   # default is v2
 ./bench_nerdle data/equations_10.txt --sample 5000   # Maxi: sample 5k (full ~1.8M takes hours)
+./bench_nerdle data/equations_8.txt --selector v1    # legacy: 300-guess pool, 1-ply entropy only
 ```
 
-Simulates the solver against all equations and reports mean/max guesses and distribution.
+Simulates the solver against all equations and reports mean/max guesses and distribution. **`--selector v2`** (default) uses the interactive solver strategy: full guess pool (or candidate ∪ random sample for Maxi-sized sets), 1-ply entropy plus a small bonus when the guess is still a candidate, then a 2-ply tiebreak on the top finalists. **`v1`** reproduces the older subsampled-pool benchmark for comparison.
 
 ---
 
@@ -247,17 +250,17 @@ make clean        # remove binaries
 
 Run `./solve_quadnerdle data/equations_8.txt` to recompute. **All 4 equations are always distinct** (space = P(n,4) = n×(n-1)×(n-2)×(n-3), not n⁴). Uses **adaptive strategy** with stratified sampling and a 200k-quad tiebreaker when the top 2 are within 0.02 bits. Use `--no-stratify` for plain random sampling.
 
-**Benchmark stats (lengths 5–10):**
+**Benchmark stats (lengths 5–10):** `bench_nerdle` **v2** (full equation pool + 2-ply; see `src/nerdle_core.hpp`).
 
 | Length | EV guesses | 2 guesses | 3 guesses | 4 guesses | 5 guesses |
 |--------|------------|-----------|-----------|-----------|-----------|
-| 5 (micro) | 3.00 | 19.7% | 61.4% | 15.0% | 3.1% |
+| 5 (micro) | 3.04 | 19.7% | 56.7% | 20.5% | 2.4% |
 | 6 (mini) | 2.64 | 35.4% | 63.6% | 0.5% | 0% |
-| 7 (midi) | 3.20 | 3.7% | 72.7% | 23.4% | 0.2% |
-| 8 (classic) | 3.17 | 3.5% | 76.6% | 19.9% | 0.1% |
-| 10 (maxi) | 3.65 | 0.2% | 37.6% | 59.0% | 3.2% |
+| 7 (midi) | 3.09 | 6.6% | 78.1% | 15.2% | 0.03% |
+| 8 (classic) | 3.03 | 7.6% | 81.4% | 11.0% | 0.006% |
+| 10 (maxi) | ~3.43 | — | — | — | — |
 
-*Maxi stats from 5k-sample benchmark (`./bench_nerdle data/equations_10.txt --sample 5000`). Full benchmark ~1.8M equations would take hours.*
+*Rows 5–8: full equation lists. Maxi: 500-equation random sample (`--selector v2`; sampling uses `--sample` with fixed shuffle seed 42). A 5k-sample v1 run on Maxi was ~3.65 EV; v2 is slower on Maxi—use `--sample`.*
 
 ---
 

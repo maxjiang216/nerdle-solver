@@ -63,6 +63,22 @@ inline uint32_t compute_feedback_packed(const std::string& guess, const std::str
     return compute_feedback_packed(guess.c_str(), solution.c_str(), N);
 }
 
+/** Packed code to G/P/B string (same order as compute_feedback_packed). */
+inline std::string feedback_packed_to_string(uint32_t code, int N) {
+    std::string s(static_cast<size_t>(N), 'B');
+    for (int i = 0; i < N; i++) {
+        int t = static_cast<int>(code % 3U);
+        s[static_cast<size_t>(i)] = (t == 2) ? 'G' : (t == 1) ? 'P' : 'B';
+        code /= 3U;
+    }
+    return s;
+}
+
+inline std::string compute_feedback_string(const std::string& guess, const std::string& solution,
+                                           int N) {
+    return feedback_packed_to_string(compute_feedback_packed(guess, solution, N), N);
+}
+
 /** User feedback string "G"/"P"/"B" to packed code (must match compute_feedback_packed). */
 inline uint32_t feedback_string_to_packed(const char* fb, int N) {
     uint32_t code = 0;
@@ -402,6 +418,132 @@ inline std::string best_guess_v2(const std::vector<std::string>& all_eqs,
     for (size_t i = 0; i < K; i++) {
         double ts = twoply_score(all_eqs, scored[i].idx, candidate_indices, N, hist, part_buf,
                                  pool2_buf, rng);
+        if (ts < best_2) {
+            best_2 = ts;
+            best_idx = scored[i].idx;
+        }
+    }
+    return all_eqs[best_idx];
+}
+
+/** Union of all boards' candidates; same Maxi sampling rule as build_guess_pool_v2. */
+inline void build_guess_pool_v2_multi(const std::vector<std::string>& all_eqs, int N,
+                                      const std::vector<std::vector<size_t>>& boards,
+                                      std::vector<size_t>& out_pool, std::mt19937& rng) {
+    std::unordered_set<size_t> seen;
+    for (const auto& b : boards) {
+        for (size_t idx : b) seen.insert(idx);
+    }
+    size_t n = all_eqs.size();
+    out_pool.clear();
+    if (N != 10 || n <= 50000) {
+        out_pool.reserve(n);
+        for (size_t i = 0; i < n; i++) out_pool.push_back(i);
+        return;
+    }
+    for (size_t idx : seen) out_pool.push_back(idx);
+    std::uniform_int_distribution<size_t> dist(0, n - 1);
+    std::unordered_set<size_t> have(seen.begin(), seen.end());
+    while (out_pool.size() < seen.size() + MAXI_RANDOM_EXTRA && have.size() < n) {
+        size_t j = dist(rng);
+        if (have.insert(j).second) out_pool.push_back(j);
+    }
+}
+
+/** Sum of twoply_score over boards with |S| > 1. */
+inline double twoply_score_multi(const std::vector<std::string>& all_eqs, size_t g1_idx,
+                                 const std::vector<std::vector<size_t>>& boards, int N,
+                                 std::vector<int>& hist, std::vector<size_t>& part_buf,
+                                 std::vector<size_t>& pool2_buf, std::mt19937& rng) {
+    double total = 0.0;
+    for (const auto& Sb : boards) {
+        if (Sb.size() <= 1) continue;
+        total += twoply_score(all_eqs, g1_idx, Sb, N, hist, part_buf, pool2_buf, rng);
+    }
+    return total;
+}
+
+struct ScoredGuessMulti {
+    size_t idx;
+    double H_sum;
+    double score1;
+    int in_count;
+};
+
+/**
+ * Multi-board selector: independent-board entropy sum H_total = sum_b H_b(g) plus per-board
+ * candidate bonus (same as v2). 2-ply tiebreak minimizes sum_b twoply_score on each board.
+ * Caller handles edge cases (all singletons, prefer singleton guess when h>0, etc.).
+ */
+inline std::string best_guess_v2_multi(const std::vector<std::string>& all_eqs,
+                                       const std::vector<std::vector<size_t>>& boards, int N,
+                                       std::vector<int>& hist, std::mt19937& rng) {
+    bool any_multi = false;
+    for (const auto& b : boards) {
+        if (b.size() > 1) {
+            any_multi = true;
+            break;
+        }
+    }
+    if (!any_multi) {
+        for (const auto& b : boards) {
+            if (!b.empty()) return all_eqs[b[0]];
+        }
+        return "";
+    }
+
+    std::vector<std::unordered_set<size_t>> board_sets;
+    board_sets.reserve(boards.size());
+    for (const auto& b : boards) board_sets.emplace_back(b.begin(), b.end());
+
+    std::vector<size_t> pool;
+    build_guess_pool_v2_multi(all_eqs, N, boards, pool, rng);
+
+    std::vector<ScoredGuessMulti> scored;
+    scored.resize(pool.size());
+
+#ifdef _OPENMP
+#pragma omp parallel for schedule(dynamic, 32)
+#endif
+    for (size_t t = 0; t < pool.size(); t++) {
+        size_t idx = pool[t];
+        std::vector<int> local_hist;
+        double H_sum = 0.0;
+        double score1 = 0.0;
+        int in_count = 0;
+        for (size_t bi = 0; bi < boards.size(); bi++) {
+            if (board_sets[bi].count(idx)) in_count++;
+            const auto& Sb = boards[bi];
+            if (Sb.size() <= 1) continue;
+            double H, sum_sq;
+            entropy_and_partitions(all_eqs[idx].c_str(), all_eqs, Sb, N, local_hist, H, sum_sq);
+            (void)sum_sq;
+            H_sum += H;
+            score1 += H;
+            if (board_sets[bi].count(idx)) {
+                const double bonus =
+                    std::log2(static_cast<double>(Sb.size())) / static_cast<double>(Sb.size());
+                score1 += bonus;
+            }
+        }
+        scored[t] = ScoredGuessMulti{idx, H_sum, score1, in_count};
+    }
+
+    std::sort(scored.begin(), scored.end(), [](const ScoredGuessMulti& a, const ScoredGuessMulti& b) {
+        if (a.score1 != b.score1) return a.score1 > b.score1;
+        if (a.in_count != b.in_count) return a.in_count > b.in_count;
+        return a.H_sum > b.H_sum;
+    });
+
+    size_t K = std::min(scored.size(), static_cast<size_t>(TWOPLY_TOP_K));
+    std::vector<size_t> part_buf;
+    std::vector<size_t> pool2_buf;
+    double best_2 = std::numeric_limits<double>::infinity();
+    size_t best_idx = scored.empty() ? 0 : scored[0].idx;
+
+    for (size_t i = 0; i < K; i++) {
+        double ts =
+            twoply_score_multi(all_eqs, scored[i].idx, boards, N, hist, part_buf, pool2_buf, rng);
         if (ts < best_2) {
             best_2 = ts;
             best_idx = scored[i].idx;

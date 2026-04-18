@@ -20,11 +20,11 @@ solve: $(SRCDIR)/solve.cpp $(SRCDIR)/nerdle_core.hpp
 solve_adaptive: $(SRCDIR)/solve_adaptive.cpp $(SRCDIR)/nerdle_core.hpp
 	$(CXX) $(CXXFLAGS) -fopenmp -o $(BINDIR)/$@ $(SRCDIR)/solve_adaptive.cpp
 
-solve_binerdle: $(SRCDIR)/solve_binerdle.cpp
-	$(CXX) $(CXXFLAGS) -fopenmp -o $(BINDIR)/$@ $<
+solve_binerdle: $(SRCDIR)/solve_binerdle.cpp $(SRCDIR)/nerdle_core.hpp
+	$(CXX) $(CXXFLAGS) -fopenmp -o $(BINDIR)/$@ $(SRCDIR)/solve_binerdle.cpp
 
-solve_quadnerdle: $(SRCDIR)/solve_quadnerdle.cpp
-	$(CXX) $(CXXFLAGS) -fopenmp -o $(BINDIR)/$@ $<
+solve_quadnerdle: $(SRCDIR)/solve_quadnerdle.cpp $(SRCDIR)/nerdle_core.hpp
+	$(CXX) $(CXXFLAGS) -fopenmp -o $(BINDIR)/$@ $(SRCDIR)/solve_quadnerdle.cpp
 
 bench_nerdle: $(SRCDIR)/bench_nerdle.cpp $(SRCDIR)/nerdle_core.hpp
 	$(CXX) $(CXXFLAGS) -fopenmp -o $(BINDIR)/$@ $(SRCDIR)/bench_nerdle.cpp
@@ -32,14 +32,14 @@ bench_nerdle: $(SRCDIR)/bench_nerdle.cpp $(SRCDIR)/nerdle_core.hpp
 nerdle: $(SRCDIR)/nerdle.cpp $(SRCDIR)/nerdle_core.hpp
 	$(CXX) $(CXXFLAGS) -o $(BINDIR)/$@ $(SRCDIR)/nerdle.cpp
 
-binerdle: $(SRCDIR)/binerdle.cpp
-	$(CXX) $(CXXFLAGS) -fopenmp -o $(BINDIR)/$@ $<
+binerdle: $(SRCDIR)/binerdle.cpp $(SRCDIR)/nerdle_core.hpp
+	$(CXX) $(CXXFLAGS) -fopenmp -o $(BINDIR)/$@ $(SRCDIR)/binerdle.cpp
 
 bench_binerdle: $(SRCDIR)/bench_binerdle.cpp
 	$(CXX) $(CXXFLAGS) -fopenmp -o $(BINDIR)/$@ $<
 
-quadnerdle: $(SRCDIR)/quadnerdle.cpp
-	$(CXX) $(CXXFLAGS) -fopenmp -o $(BINDIR)/$@ $<
+quadnerdle: $(SRCDIR)/quadnerdle.cpp $(SRCDIR)/nerdle_core.hpp
+	$(CXX) $(CXXFLAGS) -fopenmp -o $(BINDIR)/$@ $(SRCDIR)/quadnerdle.cpp
 
 bench_quadnerdle: $(SRCDIR)/bench_quadnerdle.cpp
 	$(CXX) $(CXXFLAGS) -fopenmp -o $(BINDIR)/$@ $<
