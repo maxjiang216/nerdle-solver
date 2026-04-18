@@ -16,6 +16,8 @@
 #include <unordered_set>
 #include <vector>
 
+#include "micro_policy.hpp"
+
 #ifdef _OPENMP
 #include <omp.h>
 #endif
@@ -553,20 +555,25 @@ inline std::string best_guess_v2_multi(const std::vector<std::string>& all_eqs,
     return all_eqs[best_idx];
 }
 
-/** Max equation count for which partition policy uses bitmask DP (Micro ≤127). */
-constexpr int PARTITION_POLICY_MAX_EQ = 128;
+/** Max equation count for which partition policy uses bitmask DP (Micro ≤127, Mini ≤206). */
+constexpr int PARTITION_POLICY_MAX_EQ = 256;
+
+inline bool partition_mask_bit(const PolicyMask& m, int bi) noexcept {
+    if (bi < 0 || bi >= PARTITION_POLICY_MAX_EQ)
+        return false;
+    return ((m.w[bi >> 6] >> (bi & 63)) & 1ULL) != 0;
+}
 
 struct PartitionPolicyMemoKey {
-    unsigned __int128 mask;
+    PolicyMask mask;
     uint8_t k;
     bool operator==(const PartitionPolicyMemoKey& o) const { return mask == o.mask && k == o.k; }
 };
 
 struct PartitionPolicyMemoKeyHash {
     size_t operator()(const PartitionPolicyMemoKey& x) const {
-        uint64_t lo = static_cast<uint64_t>(x.mask);
-        uint64_t hi = static_cast<uint64_t>(x.mask >> 64);
-        return lo ^ (hi * 0x9E3779B97F4A7C15ULL) ^ (static_cast<size_t>(x.k) << 1);
+        PolicyMaskHash h;
+        return h(x.mask) ^ (static_cast<size_t>(x.k) * 0x9E3779B97F4A7C15ULL);
     }
 };
 
@@ -575,23 +582,20 @@ struct PartitionPolicyVal {
     double ev_guesses;
 };
 
-inline int popcount_u128(unsigned __int128 m) {
-    return __builtin_popcountll(static_cast<uint64_t>(m)) +
-           __builtin_popcountll(static_cast<uint64_t>(m >> 64));
-}
-
-inline unsigned __int128 mask_from_candidate_indices(const std::vector<size_t>& idxs) {
-    unsigned __int128 m = 0;
-    for (size_t i : idxs)
-        m |= (unsigned __int128)1 << i;
+inline PolicyMask mask_from_candidate_indices(const std::vector<size_t>& idxs) {
+    PolicyMask m{};
+    for (size_t i : idxs) {
+        if (i < static_cast<size_t>(PARTITION_POLICY_MAX_EQ))
+            m = set_bit(m, static_cast<int>(i));
+    }
     return m;
 }
 
-inline int partition_diversity_for_guess(unsigned __int128 mask, size_t g,
+inline int partition_diversity_for_guess(const PolicyMask& mask, size_t g,
                                          const std::vector<std::string>& all_eqs, int N) {
     std::unordered_set<uint32_t> seen;
     for (int bi = 0; bi < PARTITION_POLICY_MAX_EQ; bi++) {
-        if (((mask >> bi) & 1) == 0)
+        if (!partition_mask_bit(mask, bi))
             continue;
         seen.insert(compute_feedback_packed(all_eqs[g].c_str(), all_eqs[static_cast<size_t>(bi)].c_str(),
                                             N));
@@ -599,16 +603,16 @@ inline int partition_diversity_for_guess(unsigned __int128 mask, size_t g,
     return static_cast<int>(seen.size());
 }
 
-inline unsigned __int128 filter_by_feedback(unsigned __int128 mask, size_t g, size_t s,
-                                          const std::vector<std::string>& all_eqs, int N) {
+inline PolicyMask filter_by_feedback(const PolicyMask& mask, size_t g, size_t s,
+                                     const std::vector<std::string>& all_eqs, int N) {
     uint32_t target = compute_feedback_packed(all_eqs[g].c_str(), all_eqs[s].c_str(), N);
-    unsigned __int128 out = 0;
+    PolicyMask out{};
     for (int bi = 0; bi < PARTITION_POLICY_MAX_EQ; bi++) {
-        if (((mask >> bi) & 1) == 0)
+        if (!partition_mask_bit(mask, bi))
             continue;
         size_t s2 = static_cast<size_t>(bi);
         if (compute_feedback_packed(all_eqs[g].c_str(), all_eqs[s2].c_str(), N) == target)
-            out |= (unsigned __int128)1 << bi;
+            out = set_bit(out, bi);
     }
     return out;
 }
@@ -619,25 +623,25 @@ struct PartitionPolicyCtx {
     std::unordered_map<PartitionPolicyMemoKey, PartitionPolicyVal, PartitionPolicyMemoKeyHash> memo;
 };
 
-inline PartitionPolicyVal partition_policy_evaluate(PartitionPolicyCtx& ctx, unsigned __int128 mask,
+inline PartitionPolicyVal partition_policy_evaluate(PartitionPolicyCtx& ctx, const PolicyMask& mask,
                                                     int k);
 
-inline double partition_policy_p_after_guess(PartitionPolicyCtx& ctx, unsigned __int128 mask, size_t g,
+inline double partition_policy_p_after_guess(PartitionPolicyCtx& ctx, const PolicyMask& mask, size_t g,
                                              int k) {
     if (k < 1)
         return 0.0;
-    int sz = popcount_u128(mask);
+    int sz = popcount(mask);
     if (sz == 0)
         return 0.0;
     double p = 0.0;
     for (int bi = 0; bi < PARTITION_POLICY_MAX_EQ; bi++) {
-        if (((mask >> bi) & 1) == 0)
+        if (!partition_mask_bit(mask, bi))
             continue;
         size_t s = static_cast<size_t>(bi);
         if (s == g) {
             p += 1.0 / static_cast<double>(sz);
         } else {
-            unsigned __int128 child = filter_by_feedback(mask, g, s, ctx.all_eqs, ctx.N);
+            PolicyMask child = filter_by_feedback(mask, g, s, ctx.all_eqs, ctx.N);
             PartitionPolicyVal v = partition_policy_evaluate(ctx, child, k - 1);
             p += (1.0 / static_cast<double>(sz)) * v.p_success;
         }
@@ -645,22 +649,22 @@ inline double partition_policy_p_after_guess(PartitionPolicyCtx& ctx, unsigned _
     return p;
 }
 
-inline double partition_policy_ev_after_guess(PartitionPolicyCtx& ctx, unsigned __int128 mask,
+inline double partition_policy_ev_after_guess(PartitionPolicyCtx& ctx, const PolicyMask& mask,
                                               size_t g, int k) {
     if (k < 1)
         return 0.0;
-    int sz = popcount_u128(mask);
+    int sz = popcount(mask);
     if (sz == 0)
         return 0.0;
     double e = 0.0;
     for (int bi = 0; bi < PARTITION_POLICY_MAX_EQ; bi++) {
-        if (((mask >> bi) & 1) == 0)
+        if (!partition_mask_bit(mask, bi))
             continue;
         size_t s = static_cast<size_t>(bi);
         if (s == g) {
             e += 1.0 / static_cast<double>(sz);
         } else {
-            unsigned __int128 child = filter_by_feedback(mask, g, s, ctx.all_eqs, ctx.N);
+            PolicyMask child = filter_by_feedback(mask, g, s, ctx.all_eqs, ctx.N);
             PartitionPolicyVal v = partition_policy_evaluate(ctx, child, k - 1);
             e += (1.0 / static_cast<double>(sz)) * (1.0 + v.ev_guesses);
         }
@@ -668,9 +672,9 @@ inline double partition_policy_ev_after_guess(PartitionPolicyCtx& ctx, unsigned 
     return e;
 }
 
-inline PartitionPolicyVal partition_policy_evaluate(PartitionPolicyCtx& ctx, unsigned __int128 mask,
-                                                  int k) {
-    int sz = popcount_u128(mask);
+inline PartitionPolicyVal partition_policy_evaluate(PartitionPolicyCtx& ctx, const PolicyMask& mask,
+                                                    int k) {
+    int sz = popcount(mask);
     if (sz == 0)
         return {0.0, 0.0};
     if (k < 1)
@@ -687,7 +691,7 @@ inline PartitionPolicyVal partition_policy_evaluate(PartitionPolicyCtx& ctx, uns
     int best_part = -1;
     std::vector<int> cand_g;
     for (int bi = 0; bi < PARTITION_POLICY_MAX_EQ; bi++) {
-        if (((mask >> bi) & 1) == 0)
+        if (!partition_mask_bit(mask, bi))
             continue;
         size_t g = static_cast<size_t>(bi);
         int pz = partition_diversity_for_guess(mask, g, ctx.all_eqs, ctx.N);
@@ -756,7 +760,7 @@ inline std::string best_guess_partition_policy(const std::vector<std::string>& a
         return all_eqs[best_g];
     }
 
-    unsigned __int128 mask = mask_from_candidate_indices(candidate_indices);
+    PolicyMask mask = mask_from_candidate_indices(candidate_indices);
     PartitionPolicyCtx ctx{all_eqs, N, {}};
 
     int best_part = -1;
