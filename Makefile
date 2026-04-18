@@ -4,9 +4,9 @@ CXXFLAGS = -O3 -std=c++17
 SRCDIR = src
 BINDIR = .
 
-.PHONY: all clean micro_policy
+.PHONY: all clean micro_policy mini_policy
 
-all: generate generate_maxi solve solve_adaptive solve_binerdle solve_quadnerdle bench_nerdle nerdle binerdle bench_binerdle quadnerdle bench_quadnerdle optimal_expected trace_target
+all: generate generate_maxi solve solve_adaptive solve_binerdle solve_quadnerdle bench_nerdle nerdle binerdle bench_binerdle quadnerdle bench_quadnerdle optimal_expected trace_target compare_bellman
 
 generate: $(SRCDIR)/generate.cpp
 	$(CXX) $(CXXFLAGS) -fopenmp -o $(BINDIR)/$@ $<
@@ -26,10 +26,13 @@ solve_binerdle: $(SRCDIR)/solve_binerdle.cpp $(SRCDIR)/nerdle_core.hpp
 solve_quadnerdle: $(SRCDIR)/solve_quadnerdle.cpp $(SRCDIR)/nerdle_core.hpp
 	$(CXX) $(CXXFLAGS) -fopenmp -o $(BINDIR)/$@ $(SRCDIR)/solve_quadnerdle.cpp
 
-bench_nerdle: $(SRCDIR)/bench_nerdle.cpp $(SRCDIR)/nerdle_core.hpp $(SRCDIR)/micro_policy.hpp
+bench_nerdle: $(SRCDIR)/bench_nerdle.cpp $(SRCDIR)/bench_solve.hpp $(SRCDIR)/nerdle_core.hpp $(SRCDIR)/micro_policy.hpp $(SRCDIR)/optimal_policy_build.hpp
 	$(CXX) $(CXXFLAGS) -fopenmp -o $(BINDIR)/$@ $(SRCDIR)/bench_nerdle.cpp
 
-nerdle: $(SRCDIR)/nerdle.cpp $(SRCDIR)/nerdle_core.hpp $(SRCDIR)/micro_policy.hpp
+compare_bellman: $(SRCDIR)/compare_bellman.cpp $(SRCDIR)/bench_solve.hpp $(SRCDIR)/nerdle_core.hpp $(SRCDIR)/micro_policy.hpp $(SRCDIR)/optimal_policy_build.hpp
+	$(CXX) $(CXXFLAGS) -fopenmp -o $(BINDIR)/$@ $(SRCDIR)/compare_bellman.cpp
+
+nerdle: $(SRCDIR)/nerdle.cpp $(SRCDIR)/bench_solve.hpp $(SRCDIR)/nerdle_core.hpp $(SRCDIR)/micro_policy.hpp $(SRCDIR)/optimal_policy_build.hpp
 	$(CXX) $(CXXFLAGS) -o $(BINDIR)/$@ $(SRCDIR)/nerdle.cpp
 
 binerdle: $(SRCDIR)/binerdle.cpp $(SRCDIR)/nerdle_core.hpp
@@ -51,6 +54,9 @@ optimal_expected: $(SRCDIR)/optimal_expected.cpp $(SRCDIR)/nerdle_core.hpp $(SRC
 micro_policy: optimal_expected data/equations_5.txt
 	./optimal_expected data/equations_5.txt --write-policy data/optimal_policy_5.bin --quiet
 
+mini_policy: optimal_expected data/equations_6.txt
+	./optimal_expected data/equations_6.txt --write-policy data/optimal_policy_6.bin --quiet
+
 trace_target: $(SRCDIR)/trace_target.cpp $(SRCDIR)/nerdle_core.hpp
 	$(CXX) $(CXXFLAGS) -fopenmp -o $(BINDIR)/$@ $(SRCDIR)/trace_target.cpp
 
@@ -59,4 +65,4 @@ clean:
 	      $(BINDIR)/solve_adaptive $(BINDIR)/solve_binerdle $(BINDIR)/solve_quadnerdle \
 	      $(BINDIR)/bench_nerdle $(BINDIR)/nerdle $(BINDIR)/binerdle \
 	      $(BINDIR)/bench_binerdle $(BINDIR)/quadnerdle $(BINDIR)/bench_quadnerdle \
-	      $(BINDIR)/optimal_expected $(BINDIR)/trace_target
+	      $(BINDIR)/optimal_expected $(BINDIR)/trace_target $(BINDIR)/compare_bellman

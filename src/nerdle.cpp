@@ -8,8 +8,10 @@
  *          ./nerdle --len 10    # maxi
  */
 
+#include "bench_solve.hpp"
 #include "micro_policy.hpp"
 #include "nerdle_core.hpp"
+#include "optimal_policy_build.hpp"
 
 #include <fstream>
 #include <iostream>
@@ -73,38 +75,60 @@ static std::string normalize_input(const std::string& s, bool is_maxi) {
     return normalize_maxi(s);
 }
 
-enum class PlayStrategy { Bellman, Partition, Entropy };
+using PlayStrategy = nerdle_bench::PlayStrategy;
 
 int main(int argc, char** argv) {
     int N = 8;
     bool strategy_set = false;
-    PlayStrategy strategy = PlayStrategy::Entropy;
+    std::string strat_arg;
     for (int i = 1; i < argc; i++) {
         std::string arg = argv[i];
         if (arg == "--len" && i + 1 < argc) {
             N = std::atoi(argv[++i]);
         } else if (arg == "--strategy" && i + 1 < argc) {
-            std::string s = argv[++i];
+            strat_arg = argv[++i];
             strategy_set = true;
-            if (s == "bellman")
+        }
+    }
+
+    PlayStrategy strategy = PlayStrategy::Entropy;
+    if (strategy_set) {
+        if (N == 5) {
+            if (strat_arg == "bellman")
                 strategy = PlayStrategy::Bellman;
-            else if (s == "partition")
+            else if (strat_arg == "partition")
                 strategy = PlayStrategy::Partition;
-            else if (s == "entropy" || s == "v2")
-                strategy = PlayStrategy::Entropy;
             else {
-                std::cerr << "--strategy must be bellman, partition, or entropy\n";
+                std::cerr << "Micro (--len 5): --strategy must be bellman or partition.\n";
                 return 1;
             }
+        } else if (N == 6) {
+            if (strat_arg == "optimal")
+                strategy = PlayStrategy::Optimal;
+            else {
+                std::cerr << "Mini (--len 6): --strategy must be optimal.\n";
+                return 1;
+            }
+        } else if (N == 7 || N == 8 || N == 10) {
+            if (strat_arg == "partition")
+                strategy = PlayStrategy::Partition;
+            else if (strat_arg == "entropy" || strat_arg == "v2")
+                strategy = PlayStrategy::Entropy;
+            else {
+                std::cerr << "For --len " << N << ", --strategy must be partition or entropy.\n";
+                return 1;
+            }
+        } else {
+            std::cerr << "Invalid --len for --strategy.\n";
+            return 1;
         }
     }
 
     if (N != 5 && N != 6 && N != 7 && N != 8 && N != 10) {
-        std::cerr << "Usage: ./nerdle --len 5|6|7|8|10 [--strategy bellman|partition|entropy]\n";
-        std::cerr << "  5=micro, 6=mini, 7=midi, 8=classic, 10=maxi\n";
-        std::cerr << "  bellman: Micro precomputed Bellman (data/optimal_policy_5.bin)\n";
-        std::cerr << "  partition: greedy — candidate that maximizes distinct feedbacks on S\n";
-        std::cerr << "  entropy: v2 selector (default if no Micro policy)\n";
+        std::cerr << "Usage: ./nerdle --len 5|6|7|8|10 [--strategy ...]\n";
+        std::cerr << "  --len 5 (Micro):  bellman | partition\n";
+        std::cerr << "  --len 6 (Mini):   optimal  (tries `make mini_policy` if policy missing)\n";
+        std::cerr << "  --len 7/8/10:     partition | entropy\n";
         return 1;
     }
 
@@ -133,26 +157,38 @@ int main(int argc, char** argv) {
     std::mt19937 rng(std::random_device{}());
     std::vector<int> hist;
 
-    std::unordered_map<nerdle::MicroMask128, uint8_t, nerdle::MicroMask128Hash> micro_policy;
+    std::unordered_map<nerdle::PolicyMask, uint8_t, nerdle::PolicyMaskHash> micro_policy;
     bool micro_policy_ok = false;
-    if (N == 5 && strategy != PlayStrategy::Partition) {
-        micro_policy_ok =
-            nerdle::load_micro_policy("data/optimal_policy_5.bin", static_cast<int>(equations.size()),
-                                      micro_policy);
+    if ((N == 5 || N == 6) && !(N == 5 && strategy == PlayStrategy::Partition)) {
+        const std::string pol_path =
+            (N == 5) ? "data/optimal_policy_5.bin" : "data/optimal_policy_6.bin";
+        const int neq = static_cast<int>(equations.size());
+        micro_policy_ok = nerdle::load_micro_policy(pol_path, neq, micro_policy);
+        if (!micro_policy_ok)
+            micro_policy_ok = nerdle::try_build_optimal_policy_bin(N, std::cerr) &&
+                              nerdle::load_micro_policy(pol_path, neq, micro_policy);
     }
 
     if (!strategy_set) {
-        if (N == 5 && micro_policy_ok)
-            strategy = PlayStrategy::Bellman;
-        else
+        if (N == 5)
+            strategy = micro_policy_ok ? PlayStrategy::Bellman : PlayStrategy::Partition;
+        else if (N == 6) {
+            if (!micro_policy_ok) {
+                std::cerr << "Mini requires data/optimal_policy_6.bin (`make mini_policy` failed).\n";
+                return 1;
+            }
+            strategy = PlayStrategy::Optimal;
+        } else
             strategy = PlayStrategy::Entropy;
-    } else if (strategy == PlayStrategy::Bellman && N != 5) {
-        std::cerr << "bellman strategy only applies to Micro (--len 5); using entropy.\n";
-        strategy = PlayStrategy::Entropy;
     } else if (strategy == PlayStrategy::Bellman && N == 5 && !micro_policy_ok) {
-        std::cerr << "data/optimal_policy_5.bin missing — Bellman unavailable; using entropy. "
-                     "Generate: ./optimal_expected data/equations_5.txt --write-policy "
-                     "data/optimal_policy_5.bin --quiet\n";
+        std::cerr << "data/optimal_policy_5.bin still missing after build attempt — "
+                     "using partition instead.\n";
+        strategy = PlayStrategy::Partition;
+    } else if (strategy == PlayStrategy::Optimal && N == 6 && !micro_policy_ok) {
+        std::cerr << "data/optimal_policy_6.bin still missing after build attempt.\n";
+        return 1;
+    } else if (strategy == PlayStrategy::Bellman && N != 5) {
+        std::cerr << "bellman applies to Micro (--len 5) only; using entropy.\n";
         strategy = PlayStrategy::Entropy;
     }
 
@@ -164,8 +200,10 @@ int main(int argc, char** argv) {
     std::cout << "╚═══════════════════════════════╝\n";
     std::cout << "Play on nerdlegame.com. Enter your guess and feedback (G/P/B).\n";
     std::cout << "Type 'y' when correct. Loaded " << equations.size() << " equations.\n";
-    if (strategy == PlayStrategy::Bellman)
-        std::cout << "Strategy: Bellman (EV-optimal, precomputed Micro policy).\n";
+    if (strategy == PlayStrategy::Bellman && N == 5)
+        std::cout << "Strategy: Bellman (min E[guesses], precomputed Micro policy).\n";
+    else if (strategy == PlayStrategy::Optimal && N == 6)
+        std::cout << "Strategy: optimal (unique min E[guesses], precomputed Mini policy).\n";
     else if (strategy == PlayStrategy::Partition)
         std::cout << "Strategy: partition — max feedback classes, then P(win in tries left), "
                      "min E[guesses] (same policy, recursive).\n";
@@ -180,7 +218,9 @@ int main(int argc, char** argv) {
     std::string guess;
     if (strategy == PlayStrategy::Partition) {
         guess = nerdle::best_guess_partition_policy(equations, candidates, N, MAX_TRIES);
-    } else if (strategy == PlayStrategy::Bellman && N == 5 && micro_policy_ok) {
+    } else if (((strategy == PlayStrategy::Bellman && N == 5) ||
+                (strategy == PlayStrategy::Optimal && N == 6)) &&
+               micro_policy_ok) {
         std::vector<size_t> all_idx(equations.size());
         for (size_t i = 0; i < equations.size(); i++) all_idx[i] = i;
         guess = nerdle::guess_from_micro_policy(micro_policy, equations, all_idx);
@@ -245,7 +285,9 @@ int main(int argc, char** argv) {
 
         if (strategy == PlayStrategy::Partition) {
             guess = nerdle::best_guess_partition_policy(equations, candidates, N, MAX_TRIES - turn);
-        } else if (strategy == PlayStrategy::Bellman && N == 5 && micro_policy_ok) {
+        } else if (((strategy == PlayStrategy::Bellman && N == 5) ||
+                    (strategy == PlayStrategy::Optimal && N == 6)) &&
+                   micro_policy_ok) {
             std::string pg = nerdle::guess_from_micro_policy(micro_policy, equations, candidates);
             if (!pg.empty())
                 guess = pg;
