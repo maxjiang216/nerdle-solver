@@ -16,6 +16,7 @@
 #include <unordered_set>
 #include <vector>
 
+#include "equation_canonical.hpp"
 #include "micro_policy.hpp"
 
 #ifdef _OPENMP
@@ -221,13 +222,15 @@ inline std::string best_guess_v1(const std::vector<std::string>& all_eqs,
 
     std::vector<size_t> pool_indices = build_pool_v1(all_eqs, candidate_indices);
 
+    const std::vector<CanonicalEqKey>& ckeys = canonical_keys_for_pool(all_eqs);
     size_t best_idx = pool_indices[0];
     double best_h = -1.0;
     for (size_t idx : pool_indices) {
         double h = entropy_of_guess_packed(all_eqs[idx].c_str(), all_eqs, candidate_indices, N, hist);
         bool is_cand = candidate_set.count(idx) > 0;
         bool best_is_cand = candidate_set.count(best_idx) > 0;
-        if (h > best_h || (h == best_h && is_cand && !best_is_cand)) {
+        if (h > best_h || (h == best_h && is_cand && !best_is_cand) ||
+            (h == best_h && is_cand == best_is_cand && canonical_less(idx, best_idx, all_eqs, ckeys))) {
             best_h = h;
             best_idx = idx;
         }
@@ -407,11 +410,14 @@ inline std::string best_guess_v2(const std::vector<std::string>& all_eqs,
         scored[t] = ScoredGuess{idx, H, sum_sq, s1, ins};
     }
 
-    std::sort(scored.begin(), scored.end(), [](const ScoredGuess& a, const ScoredGuess& b) {
-        if (a.score1 != b.score1) return a.score1 > b.score1;
-        if (a.in_S != b.in_S) return a.in_S > b.in_S;
-        return a.H > b.H;
-    });
+    const std::vector<CanonicalEqKey>& ckeys = canonical_keys_for_pool(all_eqs);
+    std::sort(scored.begin(), scored.end(),
+              [&](const ScoredGuess& a, const ScoredGuess& b) {
+                  if (a.score1 != b.score1) return a.score1 > b.score1;
+                  if (a.in_S != b.in_S) return a.in_S > b.in_S;
+                  if (a.H != b.H) return a.H > b.H;
+                  return canonical_less(a.idx, b.idx, all_eqs, ckeys);
+              });
 
     if (scored.empty())
         return "";
@@ -424,10 +430,13 @@ inline std::string best_guess_v2(const std::vector<std::string>& all_eqs,
     double best_2 = std::numeric_limits<double>::infinity();
     size_t best_idx = scored[0].idx;
 
+    constexpr double twoply_eps = 1e-15;
     for (size_t i = 0; i < K; i++) {
         double ts = twoply_score(all_eqs, scored[i].idx, candidate_indices, N, hist, part_buf,
                                  pool2_buf, rng);
-        if (ts < best_2) {
+        if (ts < best_2 - twoply_eps ||
+            (std::abs(ts - best_2) <= twoply_eps &&
+             canonical_less(scored[i].idx, best_idx, all_eqs, ckeys))) {
             best_2 = ts;
             best_idx = scored[i].idx;
         }
@@ -538,11 +547,14 @@ inline std::string best_guess_v2_multi(const std::vector<std::string>& all_eqs,
         scored[t] = ScoredGuessMulti{idx, H_sum, score1, in_count};
     }
 
-    std::sort(scored.begin(), scored.end(), [](const ScoredGuessMulti& a, const ScoredGuessMulti& b) {
-        if (a.score1 != b.score1) return a.score1 > b.score1;
-        if (a.in_count != b.in_count) return a.in_count > b.in_count;
-        return a.H_sum > b.H_sum;
-    });
+    const std::vector<CanonicalEqKey>& ckeys_m = canonical_keys_for_pool(all_eqs);
+    std::sort(scored.begin(), scored.end(),
+              [&](const ScoredGuessMulti& a, const ScoredGuessMulti& b) {
+                  if (a.score1 != b.score1) return a.score1 > b.score1;
+                  if (a.in_count != b.in_count) return a.in_count > b.in_count;
+                  if (a.H_sum != b.H_sum) return a.H_sum > b.H_sum;
+                  return canonical_less(a.idx, b.idx, all_eqs, ckeys_m);
+              });
 
     size_t K = std::min(scored.size(), static_cast<size_t>(TWOPLY_TOP_K));
     std::vector<size_t> part_buf;
@@ -550,10 +562,13 @@ inline std::string best_guess_v2_multi(const std::vector<std::string>& all_eqs,
     double best_2 = std::numeric_limits<double>::infinity();
     size_t best_idx = scored.empty() ? 0 : scored[0].idx;
 
+    constexpr double twoply_eps_m = 1e-15;
     for (size_t i = 0; i < K; i++) {
         double ts =
             twoply_score_multi(all_eqs, scored[i].idx, boards, N, hist, part_buf, pool2_buf, rng);
-        if (ts < best_2) {
+        if (ts < best_2 - twoply_eps_m ||
+            (std::abs(ts - best_2) <= twoply_eps_m &&
+             canonical_less(scored[i].idx, best_idx, all_eqs, ckeys_m))) {
             best_2 = ts;
             best_idx = scored[i].idx;
         }
@@ -713,13 +728,16 @@ inline PartitionPolicyVal partition_policy_evaluate(PartitionPolicyCtx& ctx, con
     constexpr double eps = 1e-12;
     double best_p = -1.0;
     double best_ev = std::numeric_limits<double>::infinity();
+    const std::vector<CanonicalEqKey>& ckeys_pp = canonical_keys_for_pool(ctx.all_eqs);
     int best_g = cand_g[0];
     for (int bi : cand_g) {
         size_t g = static_cast<size_t>(bi);
         double pg = partition_policy_p_after_guess(ctx, mask, g, k);
         double eg = partition_policy_ev_after_guess(ctx, mask, g, k);
         if (pg > best_p + eps || (std::abs(pg - best_p) <= eps && eg < best_ev - eps) ||
-            (std::abs(pg - best_p) <= eps && std::abs(eg - best_ev) <= eps && bi < best_g)) {
+            (std::abs(pg - best_p) <= eps && std::abs(eg - best_ev) <= eps &&
+             canonical_less(static_cast<size_t>(bi), static_cast<size_t>(best_g), ctx.all_eqs,
+                            ckeys_pp))) {
             best_p = pg;
             best_ev = eg;
             best_g = bi;
@@ -735,8 +753,8 @@ inline PartitionPolicyVal partition_policy_evaluate(PartitionPolicyCtx& ctx, con
 /**
  * Partition strategy (candidates only): maximize distinct feedback classes on S, then
  * lexicographically maximize P(solve within tries_remaining), minimize E[guesses] under the
- * same policy (uniform prior on S). Tie-break: smallest index.
- * Uses exact DP when all_eqs.size() <= PARTITION_POLICY_MAX_EQ; otherwise partition size + index.
+ * same policy (uniform prior on S). Tie-break: canonical equation order (equation_canonical.hpp).
+ * Uses exact DP when all_eqs.size() <= PARTITION_POLICY_MAX_EQ; otherwise partition size + canonical.
  */
 inline std::string best_guess_partition_policy(const std::vector<std::string>& all_eqs,
                                              const std::vector<size_t>& candidate_indices, int N,
@@ -748,6 +766,7 @@ inline std::string best_guess_partition_policy(const std::vector<std::string>& a
     if (tries_remaining < 1)
         return all_eqs[candidate_indices[0]];
 
+    const std::vector<CanonicalEqKey>& ckeys_part = canonical_keys_for_pool(all_eqs);
     if (static_cast<int>(all_eqs.size()) > PARTITION_POLICY_MAX_EQ) {
         size_t best_g = candidate_indices[0];
         int best_score = -1;
@@ -758,7 +777,7 @@ inline std::string best_guess_partition_policy(const std::vector<std::string>& a
                     compute_feedback_packed(all_eqs[gi].c_str(), all_eqs[si].c_str(), N));
             }
             int sc = static_cast<int>(seen.size());
-            if (sc > best_score || (sc == best_score && gi < best_g)) {
+            if (sc > best_score || (sc == best_score && canonical_less(gi, best_g, all_eqs, ckeys_part))) {
                 best_score = sc;
                 best_g = gi;
             }
@@ -791,7 +810,9 @@ inline std::string best_guess_partition_policy(const std::vector<std::string>& a
         double pg = partition_policy_p_after_guess(ctx, mask, g, tries_remaining);
         double eg = partition_policy_ev_after_guess(ctx, mask, g, tries_remaining);
         if (pg > best_p + eps || (std::abs(pg - best_p) <= eps && eg < best_ev - eps) ||
-            (std::abs(pg - best_p) <= eps && std::abs(eg - best_ev) <= eps && bi < best_gi)) {
+            (std::abs(pg - best_p) <= eps && std::abs(eg - best_ev) <= eps &&
+             canonical_less(static_cast<size_t>(bi), static_cast<size_t>(best_gi), all_eqs,
+                            ckeys_part))) {
             best_p = pg;
             best_ev = eg;
             best_gi = bi;
