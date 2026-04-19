@@ -379,7 +379,8 @@ struct ScoredGuess {
 inline std::string best_guess_v2(const std::vector<std::string>& all_eqs,
                                  const std::vector<size_t>& candidate_indices,
                                  const std::unordered_set<size_t>& candidate_set, int N,
-                                 std::vector<int>& hist, std::mt19937& rng) {
+                                 std::vector<int>& hist, std::mt19937& rng,
+                                 bool twoply_tiebreak = true) {
     if (candidate_indices.empty()) return "";
     if (candidate_indices.size() == 1) return all_eqs[candidate_indices[0]];
 
@@ -412,11 +413,16 @@ inline std::string best_guess_v2(const std::vector<std::string>& all_eqs,
         return a.H > b.H;
     });
 
+    if (scored.empty())
+        return "";
+    if (!twoply_tiebreak)
+        return all_eqs[scored[0].idx];
+
     size_t K = std::min(scored.size(), static_cast<size_t>(TWOPLY_TOP_K));
     std::vector<size_t> part_buf;
     std::vector<size_t> pool2_buf;
     double best_2 = std::numeric_limits<double>::infinity();
-    size_t best_idx = scored.empty() ? 0 : scored[0].idx;
+    size_t best_idx = scored[0].idx;
 
     for (size_t i = 0; i < K; i++) {
         double ts = twoply_score(all_eqs, scored[i].idx, candidate_indices, N, hist, part_buf,
