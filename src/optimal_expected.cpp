@@ -14,6 +14,7 @@
  * not model a hard cap such as the website's 6 tries (which would change the MDP).
  */
 
+#include "equation_canonical.hpp"
 #include "micro_policy.hpp"
 #include "nerdle_core.hpp"
 
@@ -30,8 +31,11 @@
 #include <unordered_map>
 #include <vector>
 
+using nerdle::CanonicalEqKey;
 using nerdle::PolicyMask;
 using nerdle::PolicyMaskHash;
+using nerdle::canonical_keys_for_pool;
+using nerdle::canonical_less;
 using nerdle::eq_mask;
 using nerdle::for_each_bit;
 using nerdle::full_policy_mask;
@@ -210,7 +214,9 @@ int main(int argc, char** argv) {
         return true;
     };
 
-    /** Deterministic Bellman-optimal action: minimize E; tie-break smallest index g. */
+    const std::vector<CanonicalEqKey>& canon_keys = canonical_keys_for_pool(eqs);
+
+    /** Deterministic Bellman-optimal action: minimize E; tie-break canonical equation order. */
     auto optimal_guess_index = [&](PolicyMask mask) -> int {
         int k = popcount(mask);
         if (k == 1) {
@@ -224,7 +230,10 @@ int main(int argc, char** argv) {
             double ev = 0.0;
             if (!ev_for_guess(mask, g, ev))
                 continue;
-            if (ev < best - tie_eps || (std::fabs(ev - best) <= tie_eps && (best_g < 0 || g < best_g))) {
+            if (ev < best - tie_eps ||
+                (std::fabs(ev - best) <= tie_eps &&
+                 (best_g < 0 || canonical_less(static_cast<size_t>(g), static_cast<size_t>(best_g), eqs,
+                                                canon_keys)))) {
                 best = ev;
                 best_g = g;
             }
@@ -333,7 +342,7 @@ int main(int argc, char** argv) {
     int best_g = optimal_guess_index(full);
     double best_e = e_first[static_cast<size_t>(best_g)];
 
-    std::cout << "Policy tie-break (smallest index among the above): " << eqs[static_cast<size_t>(best_g)]
+    std::cout << "Policy tie-break (canonical order among the above): " << eqs[static_cast<size_t>(best_g)]
               << "  (E = " << best_e << ")\n";
 
     if (list_all_first) {
@@ -349,7 +358,7 @@ int main(int argc, char** argv) {
     }
 
     if (do_simulate) {
-        std::cout << "\nSimulation: Bellman-optimal policy with smallest-index tie-break.\n";
+        std::cout << "\nSimulation: Bellman-optimal policy with canonical-order tie-break.\n";
         std::cout << "Guesses until correct (each of " << n << " targets):\n";
 
         std::vector<int> hist(16, 0);

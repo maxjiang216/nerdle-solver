@@ -4,6 +4,7 @@
  * Usage: ./trace_target data/equations_5.txt 9*1=9
  */
 
+#include "equation_canonical.hpp"
 #include "nerdle_core.hpp"
 
 #include <algorithm>
@@ -153,6 +154,7 @@ int main(int argc, char** argv) {
     std::unordered_map<Mask128, double, MaskHash> memo;
     const double inf = std::numeric_limits<double>::infinity();
     constexpr double tie_eps = 1e-12;
+    const std::vector<nerdle::CanonicalEqKey>& canon_keys = nerdle::canonical_keys_for_pool(eqs);
 
     auto V = [&](auto&& self, Mask128 mask) -> double {
         int k = popcount(mask);
@@ -273,7 +275,10 @@ int main(int argc, char** argv) {
             double ev = 0.0;
             if (!ev_for_guess(mask, g, ev))
                 continue;
-            if (ev < best - tie_eps || (std::fabs(ev - best) <= tie_eps && (best_g < 0 || g < best_g))) {
+            if (ev < best - tie_eps ||
+                (std::fabs(ev - best) <= tie_eps &&
+                 (best_g < 0 || nerdle::canonical_less(static_cast<size_t>(g), static_cast<size_t>(best_g),
+                                                       eqs, canon_keys)))) {
                 best = ev;
                 best_g = g;
             }
@@ -284,7 +289,7 @@ int main(int argc, char** argv) {
     Mask128 full = full_mask(n);
     (void)V(V, full);
 
-    std::cout << "=== Bellman-optimal play (min E[guesses], smallest-index tie-break)\n";
+    std::cout << "=== Bellman-optimal play (min E[guesses], canonical-order tie-break)\n";
     std::cout << "Target: " << target << "\n\n";
 
     Mask128 mask = full;

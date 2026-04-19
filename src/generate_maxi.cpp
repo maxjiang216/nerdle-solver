@@ -9,6 +9,8 @@
  * --no-pointless-brackets: exclude (n), ((e)), (a+b)+c, (a*b)*c, (2)², etc.
  */
 
+#include "equation_canonical.hpp"
+
 #include <algorithm>
 #include <cmath>
 #include <fstream>
@@ -359,6 +361,7 @@ int main(int argc, char** argv) {
     std::sort(combined.begin(), combined.end());
     auto last = std::unique(combined.begin(), combined.end());
     combined.erase(last, combined.end());
+    nerdle::sort_equations_canonical(combined);
 
     std::string out_path = out_dir + "/equations_10.txt";
     std::ofstream f(out_path);

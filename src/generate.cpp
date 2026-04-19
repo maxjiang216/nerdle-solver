@@ -9,6 +9,8 @@
  *          ./generate --allow-bare              # include bare LHS like 18=18
  */
 
+#include "equation_canonical.hpp"
+
 #include <algorithm>
 #include <cmath>
 #include <cstdlib>
@@ -237,10 +239,10 @@ int main(int argc, char** argv) {
     }
 #endif
 
-    // Deduplicate and sort
+    // Deduplicate and sort (canonical pool order; see equation_canonical.hpp)
     std::set<std::string> unique(results.begin(), results.end());
     std::vector<std::string> eqs(unique.begin(), unique.end());
-    std::sort(eqs.begin(), eqs.end());
+    nerdle::sort_equations_canonical(eqs);
 
     std::string out_path = out_dir + "/equations_" + std::to_string(eq_len) + ".txt";
     std::ofstream f(out_path);

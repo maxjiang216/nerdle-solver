@@ -27,7 +27,7 @@ static const unsigned char PLACE_SQ = '\x01';
 static const unsigned char PLACE_CB = '\x02';
 
 static const std::unordered_map<int, std::string> FIRST_GUESS = {
-    /* Micro: min E[guesses] (uniform prior); tied with 5-1=4; smallest index wins. */
+    /* Micro: min E[guesses] (uniform prior); tied with 5-1=4; canonical order tie-break. */
     {5, "3+2=5"},
     {6, "4*7=28"},
     {7, "4+27=31"},
