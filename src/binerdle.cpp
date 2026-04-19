@@ -20,7 +20,7 @@
 constexpr int MAX_TRIES = 7;
 
 static const std::unordered_map<int, std::string> FIRST_GUESS = {
-    {5, "3+2=5"}, {6, "4*7=28"}, {7, "6+18=24"},
+    {5, "3+2=5"}, {6, "4*7=28"}, {7, "4+27=31"},
     {8, "43-27=16"}, /* Binerdle-optimal (single uses 48-32=16) */
 };
 
