@@ -30,7 +30,7 @@ static const std::unordered_map<int, std::string> FIRST_GUESS = {
     /* Micro: min E[guesses] (uniform prior); tied with 5-1=4; smallest index wins. */
     {5, "3+2=5"},
     {6, "4*7=28"},
-    {7, "6+18=24"},
+    {7, "4+27=31"},
     {8, "48-32=16"},
     {10, "76+1-23=54"},
 };

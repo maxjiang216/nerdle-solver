@@ -241,7 +241,7 @@ make clean        # remove binaries
 |--------|-------------|---------|
 | 5 (micro) | 3+2=5 | Precomputed Bellman policy (`data/optimal_policy_5.bin`; see `make micro_policy`) |
 | 6 (mini) | 4*7=28 | 5.82 bits |
-| 7 (midi) | 6+18=24 | 8.15 bits |
+| 7 (midi) | 4+27=31 | ~8.26 bits |
 | 8 (classic) | 48-32=16 | 9.78 bits |
 | 10 (maxi) | 76+1-23=54 | 12.82 bits |
 
@@ -268,7 +268,7 @@ Run `./solve_quadnerdle data/equations_8.txt` to recompute. **All 4 equations ar
 |--------|------------|-----------|-----------|-----------|-----------|
 | 5 (micro) | 2.94 | 23.6% | 57.5% | 16.5% | 1.6% |
 | 6 (mini) | 2.64 | 35.4% | 63.6% | 0.5% | 0% |
-| 7 (midi) | 3.09 | 6.6% | 78.1% | 15.2% | 0.03% |
+| 7 (midi) | 3.08 | 6.1% | 79.6% | 14.3% | 0% |
 | 8 (classic) | 3.03 | 7.6% | 81.4% | 11.0% | 0.006% |
 | 10 (maxi) | ~3.43 | — | — | — | — |
 
