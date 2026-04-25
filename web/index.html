@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Nerdle solver — modes</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <header class="site">
+    <h1>Computational Atelier: Nerdle solver</h1>
+    <nav>
+      <a href="index.html">Modes</a>
+      <a href="engine.html">Engine</a>
+    </nav>
+  </header>
+  <main>
+    <div class="hero">
+      <h2>Logic <span class="accent">orchestrated.</span></h2>
+      <p>Pick a game mode, then use the engine to enter guesses and Nerdle feedback (green / purple / black). The C++ backend recommends the next move and counts remaining valid equations.</p>
+    </div>
+
+    <section class="mode-section">
+      <h3>01 — Classic Nerdle</h3>
+      <div class="cards">
+        <div class="card">
+          <h4>Micro</h4>
+          <span class="meta">5 tiles</span>
+          <a class="btn btn-primary" href="engine.html?kind=classic&amp;n=5">Open engine</a>
+        </div>
+        <div class="card">
+          <h4>Mini</h4>
+          <span class="meta">6 tiles</span>
+          <a class="btn btn-primary" href="engine.html?kind=classic&amp;n=6">Open engine</a>
+        </div>
+        <div class="card">
+          <h4>Midi</h4>
+          <span class="meta">7 tiles</span>
+          <a class="btn btn-primary" href="engine.html?kind=classic&amp;n=7">Open engine</a>
+        </div>
+        <div class="card">
+          <h4>Normal</h4>
+          <span class="meta">8 tiles</span>
+          <a class="btn btn-primary" href="engine.html?kind=classic&amp;n=8">Open engine</a>
+        </div>
+        <div class="card">
+          <h4>Maxi</h4>
+          <span class="meta">10 tiles (²³)</span>
+          <a class="btn btn-primary" href="engine.html?kind=classic&amp;n=10">Open engine</a>
+        </div>
+      </div>
+    </section>
+
+    <section class="mode-section">
+      <h3>02 — Binerdle</h3>
+      <div class="cards">
+        <div class="card">
+          <h4>Binerdle mini</h4>
+          <span class="meta">2 × 6 tiles, 7 tries</span>
+          <a class="btn btn-primary" href="engine.html?kind=binerdle&amp;n=6">Open engine</a>
+        </div>
+        <div class="card">
+          <h4>Binerdle normal</h4>
+          <span class="meta">2 × 8 tiles, 7 tries</span>
+          <a class="btn btn-primary" href="engine.html?kind=binerdle&amp;n=8">Open engine</a>
+        </div>
+      </div>
+    </section>
+
+    <section class="mode-section">
+      <h3>03 — Quad Nerdle</h3>
+      <div class="cards">
+        <div class="card pro">
+          <h4>Quad challenge</h4>
+          <span class="meta">4 × 8 tiles, 10 tries</span>
+          <a class="btn btn-magenta" href="engine.html?kind=quad&amp;n=8">Open engine</a>
+        </div>
+      </div>
+    </section>
+
+    <footer class="note">
+      Run <code>python3 web/server.py</code> from the repo root after <code>make solver_json</code> and generating equation pools. See README for strategy notes (Bellman vs partition vs entropy v2).
+    </footer>
+  </main>
+</body>
+</html>

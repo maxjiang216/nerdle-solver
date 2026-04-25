@@ -10,7 +10,9 @@ Entropy-based solver for [Nerdle](https://www.nerdlegame.com/), [Binerdle](https
 nerdle_solver/
 ├── src/                  # C++ and Python source
 │   └── nerdle_core.hpp   # Shared plain-Nerdle: packed feedback, entropy, v1/v2 selectors
+├── web/                  # Browser UI (static) + stdlib Python server
 ├── data/                 # Equation files (generated)
+├── docs/                 # Strategy notes (e.g. Micro Bellman write-up)
 ├── Makefile
 └── README.md
 ```
@@ -32,6 +34,7 @@ make                           # build C++ tools
 ./solve data/equations_5.txt   # optimal first guess
 ./bench_nerdle data/equations_8.txt
 ./nerdle --len 6               # interactive solver-assist (5,6,7,8,10)
+./nerdle_micro                 # Micro (5-tile) only; same engine as ./nerdle --len 5
 
 # Binerdle (guess 2 equations in 7 tries)
 ./solve_binerdle data/equations_6.txt
@@ -48,6 +51,23 @@ make                           # build C++ tools
 
 ---
 
+## Web UI
+
+Static pages under `web/` talk to a tiny JSON API backed by the `solver_json` binary (same logic as the interactive CLI tools).
+
+```bash
+make solver_json
+# Generate pools for the modes you need (see above), then:
+python3 web/server.py
+# Open http://127.0.0.1:8765/
+```
+
+- **Environment:** `NERDLE_DATA_DIR` defaults to the repository root (the server sets this when unset). Equation files are read from `$NERDLE_DATA_DIR/data/equations_N.txt`. Override `SOLVER_JSON` if the binary is not at `./solver_json`. Default listen port is **8765**; if it is already in use, the server tries the next ports up to **8828** and prints which one it chose. Set `STRICT_PORT=1` to require an exact `PORT` or exit.
+- **API:** `POST /api/step` with JSON body `{ "kind": "classic"|"binerdle"|"quad", "n": ..., "strategy": "ev"|"partition", "history": [...] }`. Responses include `suggestion`, `remaining`, and `strategy_resolved`.
+- **Strategies (classic):** `partition` uses the partition policy. `ev` maps to Bellman (Micro, with `data/optimal_policy_5.bin`), optimal mini policy (Mini, requires `data/optimal_policy_6.bin`), or entropy v2 (Midi / Normal / Maxi — heuristic, not full Bellman on those pools). **Binerdle / Quad:** both toggle values currently resolve to the same joint entropy multi-board selector (`strategy_resolved`: `joint_entropy_v2`); a second joint strategy can be wired in later.
+
+---
+
 ## Common use cases
 
 | Goal | Command |
@@ -58,12 +78,14 @@ make                           # build C++ tools
 | Exact min E[guesses] (uniform prior) | `./optimal_expected data/equations_5.txt` (add `--no-simulate` to skip guess-count distribution) |
 | Trace optimal vs entropy+v2 for one target | `./trace_target data/equations_5.txt '9*1=9'` |
 | Interactive Nerdle | `./nerdle --len 5\|6\|7\|8\|10` |
+| Micro (5-tile) interactive | `./nerdle_micro` or `./nerdle --len 5` — strategy notes: [docs/MICRO_STRATEGY.md](docs/MICRO_STRATEGY.md) |
 | Binerdle optimal 1st | `./solve_binerdle data/equations_6.txt` |
 | Binerdle interactive | `./binerdle --len 6` or `--len 8` |
 | Binerdle benchmark | `./bench_binerdle data/equations_6.txt` |
 | Quad Nerdle optimal 1st | `./solve_quadnerdle data/equations_8.txt` |
 | Quad Nerdle interactive | `./quadnerdle --len 8` |
 | Quad Nerdle benchmark | `./bench_quadnerdle data/equations_8.txt` |
+| Web solver UI | `make solver_json` then `python3 web/server.py` |
 
 ---
 
@@ -85,11 +107,13 @@ make                           # build C++ tools
 python src/generate.py --len 5
 ```
 
-**Micro Bellman policy** (`nerdle --len 5`, `bench_nerdle`): after generating `data/equations_5.txt`, build the lookup table used for exact min-expected-guess play:
+**Micro Bellman policy** (`nerdle_micro`, `nerdle --len 5`, `bench_nerdle`): after generating `data/equations_5.txt`, build the lookup table used for exact min-expected-guess play:
 
 ```bash
 make micro_policy
 ```
+
+Why Bellman, how ties are broken, and how this differs from the six-try-aware partition policy: **[docs/MICRO_STRATEGY.md](docs/MICRO_STRATEGY.md)**.
 
 Use **`--strategy bellman`** (default for Micro when the file exists), **`--strategy entropy`** for the v2 selector, or **`--strategy partition`**: among remaining candidate equations, maximize the number of distinct feedback patterns on **S**; among ties, maximize **P(solve within the tries left)** (uniform prior on **S**), then minimize **E[guesses]** under the same partition policy (computed recursively). Smallest index last. For pools larger than 128 equations, only the partition + index rule is used (no DP).
 

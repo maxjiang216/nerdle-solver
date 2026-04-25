@@ -6,11 +6,20 @@ solve_adaptive
 solve_binerdle
 solve_quadnerdle
 bench_nerdle
+bench_entropy_aggregate
+bench_partition_aggregate
 bench_binerdle
 nerdle
+nerdle_micro
 binerdle
 quadnerdle
 bench_quadnerdle
+compare_first_8
+list_partition_failures_8
+maxi_first_partition_sweep
+maxi_unique_partition_sample
+partition_report
+solver_json
 test_fb
 
 # Generated data (run ./generate or ./generate_maxi to create)

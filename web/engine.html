@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Nerdle solver — engine</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <header class="site">
+    <h1 id="engine-title">Solver engine</h1>
+    <nav>
+      <a href="index.html">Modes</a>
+      <a href="engine.html">Engine</a>
+    </nav>
+  </header>
+  <main>
+    <div class="engine-layout">
+      <div class="panel">
+        <h3>Solver input</h3>
+        <div class="toolbar">
+          <div class="strategy-toggle" id="strategy-toggle">
+            <button type="button" data-strat="ev" id="btn-ev">EV / optimal</button>
+            <button type="button" data-strat="partition" id="btn-partition">Partition</button>
+          </div>
+          <button type="button" class="btn btn-ghost" id="btn-reset">Reset</button>
+          <button type="button" class="btn btn-primary" id="btn-refresh">Refresh engine</button>
+        </div>
+        <p class="strategy-hint" id="strategy-hint"></p>
+
+        <div>
+          <strong>Next suggestion</strong>
+          <div class="suggestion-box" id="suggestion">—</div>
+          <button type="button" class="btn btn-primary" id="btn-apply">Apply to grid</button>
+        </div>
+
+        <h3 style="margin-top:1.25rem">Current guess</h3>
+        <p class="strategy-hint" id="guess-hint"></p>
+        <div id="combined-boards"></div>
+
+        <div class="keypad" id="keypad"></div>
+
+        <div class="toolbar" style="margin-top:1rem">
+          <button type="button" class="btn btn-primary" id="btn-submit">Submit guess + feedback</button>
+        </div>
+        <div class="msg-error" id="error-msg" hidden></div>
+
+        <div class="history" id="history"></div>
+      </div>
+
+      <div class="panel">
+        <h3>Remaining answers</h3>
+        <div class="remaining-box" id="remaining">—</div>
+        <p class="strategy-hint" id="remaining-note"></p>
+        <footer class="note" style="margin-top:1rem">
+          Teal = correct spot, purple = wrong spot, black = not in equation. Click tiles to cycle colors; keys <kbd>g</kbd> <kbd>p</kbd> <kbd>b</kbd> set color and move right.
+        </footer>
+      </div>
+    </div>
+  </main>
+  <script src="app.js" defer></script>
+</body>
+</html>
