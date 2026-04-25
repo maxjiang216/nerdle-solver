@@ -20,7 +20,7 @@ int main(int argc, char** argv) {
     std::string strat_arg;
     for (int i = 1; i < argc; i++) {
         std::string arg = argv[i];
-        if (arg == "--len" && i + 1 < argc) {
+        if ((arg == "--len" || arg == "--length") && i + 1 < argc) {
             N = std::atoi(argv[++i]);
         } else if (arg == "--strategy" && i + 1 < argc) {
             strat_arg = argv[++i];
@@ -64,7 +64,7 @@ int main(int argc, char** argv) {
     }
 
     if (N != 5 && N != 6 && N != 7 && N != 8 && N != 10) {
-        std::cerr << "Usage: ./nerdle --len 5|6|7|8|10 [--strategy ...]\n";
+        std::cerr << "Usage: ./nerdle --len 5|6|7|8|10 [--strategy ...]  (alias: --length)\n";
         std::cerr << "  --len 5 (Micro):  bellman | partition\n";
         std::cerr << "  --len 6 (Mini):   optimal | partition\n";
         std::cerr << "  --len 7/8/10:     partition | entropy\n";

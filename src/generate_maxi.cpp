@@ -15,6 +15,7 @@
 #include <cmath>
 #include <fstream>
 #include <iostream>
+#include <limits>
 #include <string>
 #include <vector>
 #ifdef _OPENMP
@@ -39,8 +40,78 @@ static inline int int_len(long long n) {
 
 // ---------------------------------------------------------------------------
 // Parser: expr = term (+ term | - term)*, term = expon (* expon | / expon)*,
-// expon = factor (²|³)*, factor = number | (expr)
+// expon = factor (²|³)*, factor = number | (expr) | -factor
+// Uses exact rational arithmetic: intermediate fractions are valid, but the final RHS must be
+// a non-negative integer.
 // ---------------------------------------------------------------------------
+struct Rational {
+    __int128 num = 0;
+    __int128 den = 1;
+    bool ok = true;
+};
+
+static __int128 abs128(__int128 x) {
+    return x < 0 ? -x : x;
+}
+
+static __int128 gcd128(__int128 a, __int128 b) {
+    a = abs128(a);
+    b = abs128(b);
+    while (b != 0) {
+        __int128 r = a % b;
+        a = b;
+        b = r;
+    }
+    return a == 0 ? 1 : a;
+}
+
+static Rational make_error() {
+    return {0, 1, false};
+}
+
+static Rational make_rational(__int128 num, __int128 den = 1) {
+    if (den == 0) return make_error();
+    if (den < 0) {
+        num = -num;
+        den = -den;
+    }
+    __int128 g = gcd128(num, den);
+    return {num / g, den / g, true};
+}
+
+static Rational add(Rational a, Rational b) {
+    if (!a.ok || !b.ok) return make_error();
+    return make_rational(a.num * b.den + b.num * a.den, a.den * b.den);
+}
+
+static Rational sub(Rational a, Rational b) {
+    if (!a.ok || !b.ok) return make_error();
+    return make_rational(a.num * b.den - b.num * a.den, a.den * b.den);
+}
+
+static Rational mul(Rational a, Rational b) {
+    if (!a.ok || !b.ok) return make_error();
+    return make_rational(a.num * b.num, a.den * b.den);
+}
+
+static Rational divv(Rational a, Rational b) {
+    if (!a.ok || !b.ok || b.num == 0) return make_error();
+    return make_rational(a.num * b.den, a.den * b.num);
+}
+
+static Rational neg(Rational a) {
+    if (!a.ok) return make_error();
+    return make_rational(-a.num, a.den);
+}
+
+static Rational pow_int(Rational a, int power) {
+    if (!a.ok) return make_error();
+    Rational out = a;
+    for (int i = 1; i < power; i++)
+        out = mul(out, a);
+    return out;
+}
+
 struct MaxiParser {
     const char* s;
     const char* end;
@@ -51,77 +122,178 @@ struct MaxiParser {
     char peek() const { return eof() ? 0 : *s; }
     char get() { return eof() ? 0 : *s++; }
 
-    long long parse_number() {
-        if (eof() || !std::isdigit(peek())) return -1;
-        long long n = get() - '0';
+    Rational parse_number() {
+        if (eof() || !std::isdigit(peek())) return make_error();
+        __int128 n = get() - '0';
         while (!eof() && std::isdigit(peek())) {
             n = n * 10 + (get() - '0');
-            if (n > 999999999) return -1;
         }
-        return n;
+        return make_rational(n);
     }
 
-    long long parse_factor() {
+    Rational parse_factor() {
+        if (peek() == '-') {
+            get();
+            return neg(parse_factor());
+        }
         if (peek() >= '0' && peek() <= '9')
             return parse_number();
         if (peek() == '(') {
             get();
-            long long r = parse_expr();
-            if (peek() != ')') return -1;
+            Rational r = parse_expr();
+            if (!r.ok || peek() != ')') return make_error();
             get();
             return r;
         }
-        return -1;
+        return make_error();
     }
 
-    long long parse_expon() {
-        long long r = parse_factor();
-        if (r < 0) return -1;
+    Rational parse_expon() {
+        Rational r = parse_factor();
+        if (!r.ok) return make_error();
         while (peek() == PLACE_SQ || peek() == PLACE_CB) {
             char c = get();
             if (c == PLACE_SQ)
-                r = r * r;
+                r = pow_int(r, 2);
             else
-                r = r * r * r;
-            if (r < 0 || r > 999999999) return -1;
+                r = pow_int(r, 3);
+            if (!r.ok) return make_error();
         }
         return r;
     }
 
-    long long parse_term() {
-        long long r = parse_expon();
-        if (r < 0) return -1;
+    Rational parse_term() {
+        Rational r = parse_expon();
+        if (!r.ok) return make_error();
         while (peek() == '*' || peek() == '/') {
             char op = get();
-            long long u = parse_expon();
-            if (u < 0) return -1;
+            Rational u = parse_expon();
+            if (!u.ok) return make_error();
             if (op == '*')
+                r = mul(r, u);
+            else
+                r = divv(r, u);
+            if (!r.ok) return make_error();
+        }
+        return r;
+    }
+
+    Rational parse_expr() {
+        Rational r = parse_term();
+        if (!r.ok) return make_error();
+        while (peek() == '+' || peek() == '-') {
+            char op = get();
+            Rational u = parse_term();
+            if (!u.ok) return make_error();
+            r = (op == '+') ? add(r, u) : sub(r, u);
+            if (!r.ok) return make_error();
+        }
+        return r;
+    }
+
+    bool eval_integer(long long& out) {
+        Rational r = parse_expr();
+        if (!r.ok || !eof() || r.den != 1 || r.num < 0 ||
+            r.num > static_cast<__int128>(std::numeric_limits<long long>::max()))
+            return false;
+        out = static_cast<long long>(r.num);
+        return true;
+    }
+};
+
+struct FastParser {
+    const char* s;
+    const char* end;
+    bool ok = true;
+
+    FastParser(const char* buf, int len) : s(buf), end(buf + len) {}
+
+    bool eof() const { return s >= end; }
+    char peek() const { return eof() ? 0 : *s; }
+    char get() { return eof() ? 0 : *s++; }
+
+    double parse_number() {
+        if (eof() || !std::isdigit(peek())) {
+            ok = false;
+            return 0.0;
+        }
+        double n = static_cast<double>(get() - '0');
+        while (!eof() && std::isdigit(peek()))
+            n = n * 10.0 + static_cast<double>(get() - '0');
+        return n;
+    }
+
+    double parse_factor() {
+        if (peek() == '-') {
+            get();
+            return -parse_factor();
+        }
+        if (peek() >= '0' && peek() <= '9')
+            return parse_number();
+        if (peek() == '(') {
+            get();
+            double r = parse_expr();
+            if (peek() != ')') {
+                ok = false;
+                return 0.0;
+            }
+            get();
+            return r;
+        }
+        ok = false;
+        return 0.0;
+    }
+
+    double parse_expon() {
+        double r = parse_factor();
+        while (ok && (peek() == PLACE_SQ || peek() == PLACE_CB)) {
+            char c = get();
+            if (c == PLACE_SQ)
+                r *= r;
+            else
+                r *= r * r;
+        }
+        return r;
+    }
+
+    double parse_term() {
+        double r = parse_expon();
+        while (ok && (peek() == '*' || peek() == '/')) {
+            char op = get();
+            double u = parse_expon();
+            if (op == '*') {
                 r *= u;
-            else {
-                if (u == 0) return -1;
-                if (r % u != 0) return -1;
+            } else {
+                if (u == 0.0) {
+                    ok = false;
+                    return 0.0;
+                }
                 r /= u;
             }
         }
         return r;
     }
 
-    long long parse_expr() {
-        long long r = parse_term();
-        if (r < 0) return -1;
-        while (peek() == '+' || peek() == '-') {
+    double parse_expr() {
+        double r = parse_term();
+        while (ok && (peek() == '+' || peek() == '-')) {
             char op = get();
-            long long u = parse_term();
-            if (u < 0) return -1;
+            double u = parse_term();
             r = (op == '+') ? (r + u) : (r - u);
-            if (r < 0) return -1;
         }
         return r;
     }
 
-    long long eval() {
-        long long r = parse_expr();
-        return (!eof() || r < 0) ? -1 : r;
+    bool eval_integer(long long& out) {
+        double r = parse_expr();
+        if (!ok || !eof() || !std::isfinite(r) || r < 0.0)
+            return false;
+        double rounded = std::round(r);
+        if (std::abs(rounded - r) > 1e-9 ||
+            rounded > static_cast<double>(std::numeric_limits<long long>::max()))
+            return false;
+        out = static_cast<long long>(rounded);
+        return true;
     }
 };
 
@@ -147,8 +319,9 @@ static bool has_pointless_brackets(const char* buf, int len, long long original_
             stripped += buf[k];
         }
         MaxiParser p(stripped.data(), static_cast<int>(stripped.size()));
-        long long ev = p.eval();
-        if (ev == original_result) return true;  /* Removing these parens changes nothing */
+        long long ev = -1;
+        if (p.eval_integer(ev) && ev == original_result)
+            return true;  /* Removing these parens changes nothing */
     }
     return false;
 }
@@ -187,14 +360,16 @@ struct Generator {
     void gen_cubed(int level);
     void gen_oper(int level);
     void gen_open(int level);
+    void gen_unary_minus(int level);
     void gen_digit(int level, int ndigits);
     void gen_nz_digit(int level);
 };
 
-// Returns true if LHS contains at least one operator (no bare number)
-static bool has_operator(const char* buf, int len) {
+// Returns true if LHS contains at least one operation. Powers count; bare numbers do not.
+static bool has_operation(const char* buf, int len) {
     for (int i = 0; i < len; i++) {
-        if (buf[i] == '+' || buf[i] == '-' || buf[i] == '*' || buf[i] == '/')
+        if (buf[i] == '+' || buf[i] == '-' || buf[i] == '*' || buf[i] == '/' ||
+            buf[i] == PLACE_SQ || buf[i] == PLACE_CB)
             return true;
     }
     return false;
@@ -203,18 +378,26 @@ static bool has_operator(const char* buf, int len) {
 void Generator::gen_equals(int level) {
     if (br_level != 0) return;
     buf[level] = '\0';
-    if (!has_operator(buf, level)) return;  // LHS must have at least one operator
-    MaxiParser p(buf, level);
-    long long result = p.eval();
-    if (result >= 0) {
-        int rhs_len = int_len(result);
-        if (level + 1 + rhs_len == 10) {
-            if (no_pointless_brackets && has_pointless_brackets(buf, level, result)) return;
-            std::string eq;
-            to_equation(buf, level, result, eq);
-            results.push_back(eq);
-        }
-    }
+    if (!has_operation(buf, level)) return;  // LHS must have at least one operation
+
+    long long result = -1;
+    FastParser fast(buf, level);
+    if (!fast.eval_integer(result))
+        return;
+
+    int rhs_len = int_len(result);
+    if (level + 1 + rhs_len != 10)
+        return;
+
+    MaxiParser exact(buf, level);
+    long long exact_result = -1;
+    if (!exact.eval_integer(exact_result) || exact_result != result)
+        return;
+
+    if (no_pointless_brackets && has_pointless_brackets(buf, level, result)) return;
+    std::string eq;
+    to_equation(buf, level, result, eq);
+    results.push_back(eq);
 }
 
 void Generator::gen_close(int level) {
@@ -260,7 +443,15 @@ void Generator::gen_open(int level) {
     br_level++;
     gen_nz_digit(level + 1);
     gen_open(level + 1);
+    gen_unary_minus(level + 1);
     br_level--;
+}
+
+void Generator::gen_unary_minus(int level) {
+    if (level >= 8) return;
+    buf[level] = '-';
+    gen_nz_digit(level + 1);
+    gen_open(level + 1);
 }
 
 void Generator::gen_digit(int level, int ndigits) {
