@@ -17,6 +17,7 @@ bench_quadnerdle
 compare_first_8
 list_partition_failures_8
 maxi_first_partition_sweep
+maxi_opening_partition_stats
 maxi_unique_partition_sample
 partition_report
 solver_json
