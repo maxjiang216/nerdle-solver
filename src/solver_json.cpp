@@ -698,6 +698,20 @@ int main() {
                     const int td = nerdle::maxi_partition_tie_depth_for_interactive(candidates.size());
                     guess = nerdle::best_guess_partition_policy(equations, candidates, N, std::max(1, tries_left), td);
                 }
+            } else if (N == 8) {
+                if (req.history.empty()) {
+                    guess.clear();
+                    for (size_t idx : candidates) {
+                        if (equations[idx] == nerdle::kClassicPartitionFixedOpening) {
+                            guess = equations[idx];
+                            break;
+                        }
+                    }
+                    if (guess.empty())
+                        guess = nerdle::best_guess_partition_policy(equations, candidates, N, std::max(1, tries_left), 0);
+                } else {
+                    guess = nerdle::best_guess_partition_policy(equations, candidates, N, std::max(1, tries_left), 0);
+                }
             } else {
                 guess = nerdle::best_guess_partition_policy(equations, candidates, N, std::max(1, tries_left), 0);
             }

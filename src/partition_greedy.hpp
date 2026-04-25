@@ -267,6 +267,12 @@ class PartitionGreedyEvaluator {
 inline constexpr const char* kMaxiPartitionFixedOpening = "58+2-13=47";
 
 /**
+ * Fixed opening for 8-tile Classic under partition: max-partition first guess on the current
+ * `data/equations_8.txt` pool. Interactive and solver_json use it when that row is in candidates.
+ */
+inline constexpr const char* kClassicPartitionFixedOpening = "52-34=18";
+
+/**
  * Heuristic: cheap greedy max-partition (tie_depth=0) when the filtered set is large; enable
  * recursive tiebreak among equal-partition ties (tie_depth=1) when the set is small enough.
  */

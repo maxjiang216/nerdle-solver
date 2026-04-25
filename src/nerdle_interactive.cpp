@@ -71,11 +71,12 @@ std::string normalize_input(const std::string& s, bool is_maxi) {
 
 using PlayStrategy = nerdle_bench::PlayStrategy;
 
-/** Pool string for fixed Maxi opening (UTF-8 superscripts already normalized in `equations`). */
-std::string maxi_partition_fixed_if_in_pool(const std::vector<std::string>& equations,
-                                          const std::vector<size_t>& candidate_indices) {
+/** If `fixed` is a row in `candidate_indices`, return it; else empty (UTF-8 already normalized in pool). */
+std::string partition_fixed_if_in_pool(const std::vector<std::string>& equations,
+                                       const std::vector<size_t>& candidate_indices,
+                                       const char* fixed) {
     for (size_t idx : candidate_indices) {
-        if (equations[idx] == nerdle::kMaxiPartitionFixedOpening)
+        if (equations[idx] == fixed)
             return equations[idx];
     }
     return "";
@@ -174,6 +175,9 @@ int run(const Config& cfg) {
             std::cout << "Strategy: partition — fixed opening " << nerdle::kMaxiPartitionFixedOpening
                       << " (if in pool), then max distinct feedbacks; tie depth 0 when |C|>512, "
                          "else 1 among equal-partition ties.\n";
+        else if (N == 8)
+            std::cout << "Strategy: partition — fixed opening " << nerdle::kClassicPartitionFixedOpening
+                      << " (if in pool), then max distinct feedbacks; deeper tie-breaks only on ties.\n";
         else
             std::cout << "Strategy: partition — maximize feedback classes; deeper tie-breaks only on ties.\n";
     }
@@ -189,7 +193,13 @@ int run(const Config& cfg) {
     std::string guess;
     if (strategy == PlayStrategy::Partition) {
         if (is_maxi) {
-            std::string fixed = maxi_partition_fixed_if_in_pool(equations, candidates);
+            std::string fixed =
+                partition_fixed_if_in_pool(equations, candidates, nerdle::kMaxiPartitionFixedOpening);
+            guess = !fixed.empty() ? fixed
+                                   : nerdle::best_guess_partition_policy(equations, candidates, N, MAX_TRIES, 0);
+        } else if (N == 8) {
+            std::string fixed =
+                partition_fixed_if_in_pool(equations, candidates, nerdle::kClassicPartitionFixedOpening);
             guess = !fixed.empty() ? fixed
                                    : nerdle::best_guess_partition_policy(equations, candidates, N, MAX_TRIES, 0);
         } else
