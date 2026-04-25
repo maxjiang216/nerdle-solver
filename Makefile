@@ -4,9 +4,9 @@ CXXFLAGS = -O3 -std=c++17
 SRCDIR = src
 BINDIR = .
 
-.PHONY: all clean micro_policy mini_policy canonical_tables
+.PHONY: all clean micro_policy mini_policy canonical_tables report_partition_8 report_partition_maxi compare_first_8 list_partition_failures_8 maxi_unique_partition_sample maxi_first_partition_sweep
 
-all: generate generate_maxi solve solve_adaptive solve_binerdle solve_quadnerdle bench_nerdle nerdle binerdle bench_binerdle quadnerdle bench_quadnerdle optimal_expected optimal_subgame midi_exact compare_subgame_entropy compare_full_restricted_subgame explore_first_guess first_guess_tiered_sim first_guess_recursive_ev first_guess_staged_sample trace_target compare_bellman
+all: generate generate_maxi solve solve_adaptive solve_binerdle solve_quadnerdle bench_nerdle bench_partition_aggregate bench_entropy_aggregate nerdle nerdle_micro binerdle bench_binerdle quadnerdle bench_quadnerdle optimal_expected optimal_subgame midi_exact compare_subgame_entropy compare_full_restricted_subgame explore_first_guess first_guess_tiered_sim first_guess_recursive_ev first_guess_staged_sample trace_target compare_bellman solver_json compare_first_8 list_partition_failures_8 maxi_unique_partition_sample maxi_first_partition_sweep partition_report
 
 generate: $(SRCDIR)/generate.cpp $(SRCDIR)/equation_canonical.hpp
 	$(CXX) $(CXXFLAGS) -fopenmp -I$(SRCDIR) -o $(BINDIR)/$@ $(SRCDIR)/generate.cpp
@@ -29,11 +29,46 @@ solve_quadnerdle: $(SRCDIR)/solve_quadnerdle.cpp $(SRCDIR)/nerdle_core.hpp
 bench_nerdle: $(SRCDIR)/bench_nerdle.cpp $(SRCDIR)/bench_solve.hpp $(SRCDIR)/equation_canonical.hpp $(SRCDIR)/nerdle_core.hpp $(SRCDIR)/micro_policy.hpp $(SRCDIR)/optimal_policy_build.hpp
 	$(CXX) $(CXXFLAGS) -fopenmp -o $(BINDIR)/$@ $(SRCDIR)/bench_nerdle.cpp
 
+bench_partition_aggregate: $(SRCDIR)/bench_partition_aggregate.cpp $(SRCDIR)/equation_canonical.hpp $(SRCDIR)/nerdle_core.hpp
+	$(CXX) $(CXXFLAGS) -fopenmp -Isrc -o $(BINDIR)/$@ $(SRCDIR)/bench_partition_aggregate.cpp
+
+bench_entropy_aggregate: $(SRCDIR)/bench_entropy_aggregate.cpp $(SRCDIR)/equation_canonical.hpp $(SRCDIR)/nerdle_core.hpp
+	$(CXX) $(CXXFLAGS) -fopenmp -Isrc -o $(BINDIR)/$@ $(SRCDIR)/bench_entropy_aggregate.cpp
+
 compare_bellman: $(SRCDIR)/compare_bellman.cpp $(SRCDIR)/bench_solve.hpp $(SRCDIR)/equation_canonical.hpp $(SRCDIR)/nerdle_core.hpp $(SRCDIR)/micro_policy.hpp $(SRCDIR)/optimal_policy_build.hpp
 	$(CXX) $(CXXFLAGS) -fopenmp -o $(BINDIR)/$@ $(SRCDIR)/compare_bellman.cpp
 
-nerdle: $(SRCDIR)/nerdle.cpp $(SRCDIR)/bench_solve.hpp $(SRCDIR)/equation_canonical.hpp $(SRCDIR)/nerdle_core.hpp $(SRCDIR)/micro_policy.hpp $(SRCDIR)/optimal_policy_build.hpp
-	$(CXX) $(CXXFLAGS) -o $(BINDIR)/$@ $(SRCDIR)/nerdle.cpp
+nerdle: $(SRCDIR)/nerdle.cpp $(SRCDIR)/nerdle_interactive.cpp $(SRCDIR)/nerdle_interactive.hpp $(SRCDIR)/bench_solve.hpp $(SRCDIR)/equation_canonical.hpp $(SRCDIR)/nerdle_core.hpp $(SRCDIR)/micro_policy.hpp $(SRCDIR)/optimal_policy_build.hpp
+	$(CXX) $(CXXFLAGS) -o $(BINDIR)/$@ $(SRCDIR)/nerdle.cpp $(SRCDIR)/nerdle_interactive.cpp
+
+nerdle_micro: $(SRCDIR)/nerdle_micro.cpp $(SRCDIR)/nerdle_interactive.cpp $(SRCDIR)/nerdle_interactive.hpp $(SRCDIR)/bench_solve.hpp $(SRCDIR)/equation_canonical.hpp $(SRCDIR)/nerdle_core.hpp $(SRCDIR)/micro_policy.hpp $(SRCDIR)/optimal_policy_build.hpp
+	$(CXX) $(CXXFLAGS) -o $(BINDIR)/$@ $(SRCDIR)/nerdle_micro.cpp $(SRCDIR)/nerdle_interactive.cpp
+
+solver_json: $(SRCDIR)/solver_json.cpp $(SRCDIR)/bench_solve.hpp $(SRCDIR)/equation_canonical.hpp $(SRCDIR)/nerdle_core.hpp $(SRCDIR)/micro_policy.hpp
+	$(CXX) $(CXXFLAGS) -fopenmp -o $(BINDIR)/$@ $(SRCDIR)/solver_json.cpp
+
+partition_report: $(SRCDIR)/partition_report.cpp $(SRCDIR)/equation_canonical.hpp $(SRCDIR)/nerdle_core.hpp
+	$(CXX) $(CXXFLAGS) -fopenmp -I$(SRCDIR) -o $(BINDIR)/$@ $(SRCDIR)/partition_report.cpp
+
+# 8-tile: same partition+report engine; increase --tie-depth stepwise (0,1,2,…) to measure cost
+report_partition_8: partition_report
+	./partition_report --pool data/equations_8.txt --tie-depth 0
+
+# Maxi: full pool is ~1.8M; use --max for a prefix (canonical order) so the report n×n table + policy eval fit RAM/time
+report_partition_maxi: partition_report
+	./partition_report --pool data/equations_10.txt --tie-depth 0 --max 15000
+
+compare_first_8: $(SRCDIR)/compare_first_8.cpp $(SRCDIR)/equation_canonical.hpp $(SRCDIR)/nerdle_core.hpp
+	$(CXX) $(CXXFLAGS) -fopenmp -I$(SRCDIR) -o $(BINDIR)/$@ $(SRCDIR)/compare_first_8.cpp
+
+list_partition_failures_8: $(SRCDIR)/list_partition_failures_8.cpp $(SRCDIR)/equation_canonical.hpp $(SRCDIR)/nerdle_core.hpp
+	$(CXX) $(CXXFLAGS) -fopenmp -I$(SRCDIR) -o $(BINDIR)/$@ $(SRCDIR)/list_partition_failures_8.cpp
+
+maxi_unique_partition_sample: $(SRCDIR)/maxi_unique_partition_sample.cpp $(SRCDIR)/equation_canonical.hpp $(SRCDIR)/nerdle_core.hpp
+	$(CXX) $(CXXFLAGS) -fopenmp -I$(SRCDIR) -o $(BINDIR)/$@ $(SRCDIR)/maxi_unique_partition_sample.cpp
+
+maxi_first_partition_sweep: $(SRCDIR)/maxi_first_partition_sweep.cpp $(SRCDIR)/equation_canonical.hpp $(SRCDIR)/nerdle_core.hpp
+	$(CXX) $(CXXFLAGS) -fopenmp -I$(SRCDIR) -o $(BINDIR)/$@ $(SRCDIR)/maxi_first_partition_sweep.cpp
 
 binerdle: $(SRCDIR)/binerdle.cpp $(SRCDIR)/nerdle_core.hpp
 	$(CXX) $(CXXFLAGS) -fopenmp -o $(BINDIR)/$@ $(SRCDIR)/binerdle.cpp
@@ -77,7 +112,7 @@ first_guess_staged_sample: $(SRCDIR)/first_guess_staged_sample.cpp $(SRCDIR)/ben
 equation_canonical_table: $(SRCDIR)/equation_canonical_table.cpp $(SRCDIR)/equation_canonical.hpp
 	$(CXX) $(CXXFLAGS) -I$(SRCDIR) -o $(BINDIR)/$@ $(SRCDIR)/equation_canonical_table.cpp
 
-# TSV: equation, distinct, symbol_score (product), position_score (product) — canonical row order
+# TSV: equation, distinct, purple, green, partition — canonical row order
 canonical_tables: equation_canonical_table
 	mkdir -p data/canonical_tables
 	./equation_canonical_table data/equations_5.txt --out data/canonical_tables/eq_5.tsv
@@ -99,10 +134,14 @@ trace_target: $(SRCDIR)/trace_target.cpp $(SRCDIR)/equation_canonical.hpp $(SRCD
 clean:
 	rm -f $(BINDIR)/generate $(BINDIR)/generate_maxi $(BINDIR)/solve \
 	      $(BINDIR)/solve_adaptive $(BINDIR)/solve_binerdle $(BINDIR)/solve_quadnerdle \
-	      $(BINDIR)/bench_nerdle $(BINDIR)/nerdle $(BINDIR)/binerdle \
+	      $(BINDIR)/bench_nerdle $(BINDIR)/nerdle $(BINDIR)/nerdle_micro $(BINDIR)/binerdle \
 	      $(BINDIR)/bench_binerdle $(BINDIR)/quadnerdle $(BINDIR)/bench_quadnerdle \
 	      $(BINDIR)/optimal_expected $(BINDIR)/equation_canonical_table \
 	      $(BINDIR)/optimal_subgame $(BINDIR)/midi_exact $(BINDIR)/compare_subgame_entropy \
 	      $(BINDIR)/compare_full_restricted_subgame $(BINDIR)/explore_first_guess \
 	      $(BINDIR)/first_guess_tiered_sim $(BINDIR)/first_guess_recursive_ev \
-	      $(BINDIR)/first_guess_staged_sample $(BINDIR)/trace_target $(BINDIR)/compare_bellman
+	      $(BINDIR)/first_guess_staged_sample $(BINDIR)/trace_target $(BINDIR)/compare_bellman \
+	      $(BINDIR)/solver_json $(BINDIR)/partition_report $(BINDIR)/compare_first_8 \
+	      $(BINDIR)/list_partition_failures_8 $(BINDIR)/maxi_unique_partition_sample \
+	      $(BINDIR)/maxi_first_partition_sweep $(BINDIR)/bench_partition_aggregate \
+	      $(BINDIR)/bench_entropy_aggregate

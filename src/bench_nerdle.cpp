@@ -3,7 +3,8 @@
  *
  * Compile: g++ -O3 -std=c++17 -fopenmp -o bench_nerdle bench_nerdle.cpp
  * Run:     ./bench_nerdle equations_5.txt
- *          ./bench_nerdle equations_8.txt [--selector v1|v2] [--strategy bellman|partition|entropy] [--sample N]
+ *          ./bench_nerdle equations_8.txt [--selector v1|v2] [--strategy ...] [--sample N]
+ *          partition: [--partition-tie-depth N]  (0 = no extra tiebreaks)  [--per-secret] slow sim
  *
  * Uses OpenMP for parallel execution. Without -fopenmp, runs single-threaded.
  */
@@ -31,7 +32,7 @@ int main(int argc, char** argv) {
         std::cerr << "Usage: " << (argc ? argv[0] : "bench_nerdle")
                   << " <equations.txt> [--selector v1|v2] [--strategy ...] [--sample N]\n";
         std::cerr << "  N=5 (Micro): bellman | partition  (entropy: optional v2 comparison)\n";
-        std::cerr << "  N=6 (Mini):  optimal  (entropy: optional v2 comparison)\n";
+        std::cerr << "  N=6 (Mini):  optimal | partition  (entropy: optional v2 comparison)\n";
         std::cerr << "  other lengths: partition | entropy\n";
         return 1;
     }
@@ -40,11 +41,17 @@ int main(int argc, char** argv) {
     Selector sel = Selector::V2;
     bool strategy_set = false;
     PlayStrategy strat = PlayStrategy::Entropy;
+    int partition_tie_depth = 0;
+    bool partition_per_secret = false;
     for (int i = 1; i < argc; i++) {
         std::string arg = argv[i];
         if (arg == "--sample" && i + 1 < argc) {
             sample_size = static_cast<size_t>(std::atoi(argv[++i]));
-        } else if (arg == "--selector" && i + 1 < argc) {
+        } else if (arg == "--partition-tie-depth" && i + 1 < argc) {
+            partition_tie_depth = std::atoi(argv[++i]);
+        } else if (arg == "--per-secret")
+            partition_per_secret = true;
+        else if (arg == "--selector" && i + 1 < argc) {
             std::string v = argv[++i];
             if (v == "v1" || v == "V1")
                 sel = Selector::V1;
@@ -120,8 +127,9 @@ int main(int argc, char** argv) {
     const auto& fg_map = nerdle_bench::first_guess_map();
     std::string first_guess = fg_map.count(N) ? fg_map.at(N) : equations[0];
 
-    if (N == 6 && (strat == PlayStrategy::Bellman || strat == PlayStrategy::Partition)) {
-        std::cerr << "Mini (6-tile): use --strategy optimal (or entropy for v2 comparison).\n";
+    if (N == 6 && strat == PlayStrategy::Bellman) {
+        std::cerr << "Mini (6-tile): use --strategy optimal or partition "
+                     "(or entropy for v2 comparison).\n";
         return 1;
     }
     if (N == 5 && strat == PlayStrategy::Optimal) {
@@ -132,7 +140,7 @@ int main(int argc, char** argv) {
 
     std::unordered_map<nerdle::PolicyMask, uint8_t, nerdle::PolicyMaskHash> micro_policy;
     bool micro_policy_ok = false;
-    if ((N == 5 || N == 6) && !(N == 5 && strat == PlayStrategy::Partition)) {
+    if ((N == 5 || N == 6) && strat != PlayStrategy::Partition) {
         const std::string pol_path =
             (N == 5) ? "data/optimal_policy_5.bin" : "data/optimal_policy_6.bin";
         const int neq = static_cast<int>(equations.size());
@@ -171,6 +179,11 @@ int main(int argc, char** argv) {
         if (!pg.empty())
             first_guess = pg;
     }
+    if (strat == PlayStrategy::Partition) {
+        std::vector<size_t> all_idx(equations.size());
+        for (size_t i = 0; i < equations.size(); i++) all_idx[i] = i;
+        first_guess = nerdle::best_guess_partition_policy(equations, all_idx, N, max_tries, partition_tie_depth);
+    }
 
     std::vector<size_t> indices;
     if (sample_size > 0 && sample_size < equations.size()) {
@@ -185,12 +198,49 @@ int main(int argc, char** argv) {
     }
 
     size_t n = indices.size();
+    if (strat == PlayStrategy::Partition && !partition_per_secret && sample_size == 0) {
+        std::vector<size_t> all_idx(equations.size());
+        for (size_t i = 0; i < equations.size(); i++) all_idx[i] = i;
+        nerdle::PartitionGreedyEvaluator ev(equations, N, max_tries, partition_tie_depth,
+                                            nerdle::PartitionFbBudget::Report);
+        ev.build_feedback_matrix();
+        nerdle::PartitionSolveDist val{};
+        int gi = ev.best_guess_index(all_idx, max_tries, &val);
+        first_guess = equations[static_cast<size_t>(gi)];
+        double solved_p = 0.0, ev_solved = 0.0;
+        for (int t = 1; t <= max_tries && t < static_cast<int>(val.solve_at.size()); t++) {
+            ev_solved += static_cast<double>(t) * val.solve_at[static_cast<size_t>(t)];
+            solved_p += val.solve_at[static_cast<size_t>(t)];
+        }
+        const double fail_p = std::max(0.0, 1.0 - solved_p);
+        const double evm = ev_solved + static_cast<double>(max_tries + 1) * fail_p;
+        long long emitted = 0;
+        std::cout << "Partition (cached feedback + exact distribution)  n=" << equations.size() << "  N=" << N
+                  << "  tie_depth=" << partition_tie_depth << "\n";
+        std::cout << "  First guess  : " << first_guess << "\n";
+        std::cout << "  Mean guesses : " << evm << "\n";
+        std::cout << "  Distribution: ";
+        for (int t = 1; t <= max_tries && t < static_cast<int>(val.solve_at.size()); t++) {
+            const double p = val.solve_at[static_cast<size_t>(t)];
+            const long long cnt = std::llround(p * static_cast<double>(equations.size()));
+            emitted += cnt;
+            if (cnt > 0)
+                std::cout << t << ":" << cnt << " ";
+        }
+        const long long fail_cnt = static_cast<long long>(equations.size()) - emitted;
+        if (fail_cnt > 0)
+            std::cout << (max_tries + 1) << ":" << fail_cnt << " ";
+        std::cout << "\n  memo_states: " << ev.memo_size() << "\n";
+        return 0;
+    }
+
     std::cout << "Benchmarking " << n << " equations";
     if (sample_size > 0 && sample_size < equations.size())
         std::cout << " (sampled from " << equations.size() << ")";
     std::cout << " (" << N << "-tile, " << max_tries << " tries";
     if (strat == PlayStrategy::Partition)
-        std::cout << ", strategy partition (max classes, then P(win), min E[guesses] recursively)";
+        std::cout << ", strategy partition (per-secret simulation; full pool without --sample uses"
+                     " exact cached distribution path)";
     else if (strat == PlayStrategy::Bellman && N == 5)
         std::cout << ", strategy Bellman (precomputed policy)";
     else if (strat == PlayStrategy::Optimal && N == 6)
@@ -235,6 +285,7 @@ int main(int argc, char** argv) {
 
     int fail_val = max_tries + 1;
     std::cout << "\nResults over " << n << " equations:\n";
+    std::cout << "  First guess  : " << first_guess << "\n";
     std::cout << "  Mean guesses : " << (sum / n) << "\n";
     std::cout << "  Max guesses  : " << max_g << "\n";
     std::cout << "  Distribution: ";

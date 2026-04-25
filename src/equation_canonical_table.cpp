@@ -1,6 +1,6 @@
 /**
- * Emit a TSV table of equations in canonical order with the first three tuple keys:
- *   distinct_symbols, symbol_score (product), position_score (product).
+ * Emit a TSV table of equations in canonical order with tuple keys (see equation_canonical.hpp):
+ *   distinct, purple, green, partition; plus lexicographic.
  *
  * Usage: ./equation_canonical_table data/equations_5.txt [--out path] [--max N]
  *        --max 0 means no limit (default 0).
@@ -8,7 +8,6 @@
 
 #include "equation_canonical.hpp"
 
-#include <cmath>
 #include <fstream>
 #include <iomanip>
 #include <iostream>
@@ -81,7 +80,7 @@ int main(int argc, char** argv) {
     }
 
     *out << std::setprecision(17);
-    *out << "equation\tdistinct_symbols\tsymbol_score\tposition_score\n";
+    *out << "equation\tdistinct_symbols\tpurple\tgreen\tpartition\n";
 
     size_t n = ord.size();
     if (max_rows > 0 && max_rows < n)
@@ -90,9 +89,8 @@ int main(int argc, char** argv) {
     for (size_t r = 0; r < n; r++) {
         size_t idx = ord[r];
         const nerdle::CanonicalEqKey& k = keys[idx];
-        double sym_prod = std::exp(k.sym_log_sum);
-        double pos_prod = std::exp(k.pos_log_sum);
-        *out << eqs[idx] << '\t' << k.distinct << '\t' << sym_prod << '\t' << pos_prod << '\n';
+        *out << eqs[idx] << '\t' << k.distinct << '\t' << k.purple << '\t' << k.green << '\t' << k.partition
+             << '\n';
     }
 
     if (!out_path.empty())
