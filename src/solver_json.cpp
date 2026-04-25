@@ -683,7 +683,24 @@ int main() {
         const int tries_left = detail::MAX_TRIES_CLASSIC - turn;
         std::string guess;
         if (strategy == PlayStrategy::Partition) {
-            guess = nerdle::best_guess_partition_policy(equations, candidates, N, std::max(1, tries_left));
+            if (is_maxi) {
+                if (req.history.empty()) {
+                    guess.clear();
+                    for (size_t idx : candidates) {
+                        if (equations[idx] == nerdle::kMaxiPartitionFixedOpening) {
+                            guess = equations[idx];
+                            break;
+                        }
+                    }
+                    if (guess.empty())
+                        guess = nerdle::best_guess_partition_policy(equations, candidates, N, std::max(1, tries_left), 0);
+                } else {
+                    const int td = nerdle::maxi_partition_tie_depth_for_interactive(candidates.size());
+                    guess = nerdle::best_guess_partition_policy(equations, candidates, N, std::max(1, tries_left), td);
+                }
+            } else {
+                guess = nerdle::best_guess_partition_policy(equations, candidates, N, std::max(1, tries_left), 0);
+            }
         } else if (((strategy == PlayStrategy::Bellman && N == 5) ||
                     (strategy == PlayStrategy::Optimal && N == 6)) &&
                    micro_policy_ok) {

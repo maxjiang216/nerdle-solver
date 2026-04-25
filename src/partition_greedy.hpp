@@ -259,6 +259,25 @@ class PartitionGreedyEvaluator {
 };
 
 /**
+ * Fixed opening recommended for 10-tile (6-try) Maxi under partition: exact max-partition winner
+ * over `data/equations_10.txt` (sweep / winners). Interactive and solver_json use this for the
+ * first suggestion when still in the candidate set; the generic best_guess_partition_policy does
+ * not special-case the opening.
+ */
+inline constexpr const char* kMaxiPartitionFixedOpening = "58+2-13=47";
+
+/**
+ * Heuristic: cheap greedy max-partition (tie_depth=0) when the filtered set is large; enable
+ * recursive tiebreak among equal-partition ties (tie_depth=1) when the set is small enough.
+ */
+inline int maxi_partition_tie_depth_for_interactive(size_t num_candidates) {
+    constexpr size_t kThreshold = 512;
+    if (num_candidates <= kThreshold)
+        return 1;
+    return 0;
+}
+
+/**
  * partition tie_depth: 0 = greedy max feedback classes only (no extra tiebreaks);
  * 1+ = on ties, compare solve distribution to that depth.
  */

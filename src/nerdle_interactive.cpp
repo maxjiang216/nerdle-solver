@@ -71,6 +71,16 @@ std::string normalize_input(const std::string& s, bool is_maxi) {
 
 using PlayStrategy = nerdle_bench::PlayStrategy;
 
+/** Pool string for fixed Maxi opening (UTF-8 superscripts already normalized in `equations`). */
+std::string maxi_partition_fixed_if_in_pool(const std::vector<std::string>& equations,
+                                          const std::vector<size_t>& candidate_indices) {
+    for (size_t idx : candidate_indices) {
+        if (equations[idx] == nerdle::kMaxiPartitionFixedOpening)
+            return equations[idx];
+    }
+    return "";
+}
+
 } // namespace
 
 int run(const Config& cfg) {
@@ -159,8 +169,14 @@ int run(const Config& cfg) {
         std::cout << "Strategy: Bellman (min E[guesses], precomputed Micro policy).\n";
     else if (strategy == PlayStrategy::Optimal && N == 6)
         std::cout << "Strategy: optimal (unique min E[guesses], precomputed Mini policy).\n";
-    else if (strategy == PlayStrategy::Partition)
-        std::cout << "Strategy: partition — maximize feedback classes; deeper tie-breaks only on ties.\n";
+    else if (strategy == PlayStrategy::Partition) {
+        if (N == 10)
+            std::cout << "Strategy: partition — fixed opening " << nerdle::kMaxiPartitionFixedOpening
+                      << " (if in pool), then max distinct feedbacks; tie depth 0 when |C|>512, "
+                         "else 1 among equal-partition ties.\n";
+        else
+            std::cout << "Strategy: partition — maximize feedback classes; deeper tie-breaks only on ties.\n";
+    }
     else
         std::cout << "Strategy: entropy (v2).\n";
     std::cout << "\n";
@@ -172,7 +188,12 @@ int run(const Config& cfg) {
 
     std::string guess;
     if (strategy == PlayStrategy::Partition) {
-        guess = nerdle::best_guess_partition_policy(equations, candidates, N, MAX_TRIES);
+        if (is_maxi) {
+            std::string fixed = maxi_partition_fixed_if_in_pool(equations, candidates);
+            guess = !fixed.empty() ? fixed
+                                   : nerdle::best_guess_partition_policy(equations, candidates, N, MAX_TRIES, 0);
+        } else
+            guess = nerdle::best_guess_partition_policy(equations, candidates, N, MAX_TRIES, 0);
     } else if (((strategy == PlayStrategy::Bellman && N == 5) ||
                 (strategy == PlayStrategy::Optimal && N == 6)) &&
                micro_policy_ok) {
@@ -243,7 +264,11 @@ int run(const Config& cfg) {
         }
 
         if (strategy == PlayStrategy::Partition) {
-            guess = nerdle::best_guess_partition_policy(equations, candidates, N, MAX_TRIES - turn);
+            if (is_maxi) {
+                const int td = nerdle::maxi_partition_tie_depth_for_interactive(candidates.size());
+                guess = nerdle::best_guess_partition_policy(equations, candidates, N, MAX_TRIES - turn, td);
+            } else
+                guess = nerdle::best_guess_partition_policy(equations, candidates, N, MAX_TRIES - turn, 0);
         } else if (((strategy == PlayStrategy::Bellman && N == 5) ||
                     (strategy == PlayStrategy::Optimal && N == 6)) &&
                    micro_policy_ok) {

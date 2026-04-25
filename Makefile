@@ -4,7 +4,7 @@ CXXFLAGS = -O3 -std=c++17
 SRCDIR = src
 BINDIR = .
 
-.PHONY: all clean micro_policy mini_policy canonical_tables report_partition_8 report_partition_maxi compare_first_8 list_partition_failures_8 maxi_unique_partition_sample maxi_first_partition_sweep
+.PHONY: all clean micro_policy mini_policy canonical_tables report_partition_8 report_partition_maxi compare_first_8 list_partition_failures_8 maxi_unique_partition_sample maxi_first_partition_sweep maxi_opening_partition_stats
 
 all: generate generate_maxi solve solve_adaptive solve_binerdle solve_quadnerdle bench_nerdle bench_partition_aggregate bench_entropy_aggregate nerdle nerdle_micro binerdle bench_binerdle quadnerdle bench_quadnerdle optimal_expected optimal_subgame midi_exact compare_subgame_entropy compare_full_restricted_subgame explore_first_guess first_guess_tiered_sim first_guess_recursive_ev first_guess_staged_sample trace_target compare_bellman solver_json compare_first_8 list_partition_failures_8 maxi_unique_partition_sample maxi_first_partition_sweep partition_report
 
@@ -69,6 +69,9 @@ maxi_unique_partition_sample: $(SRCDIR)/maxi_unique_partition_sample.cpp $(SRCDI
 
 maxi_first_partition_sweep: $(SRCDIR)/maxi_first_partition_sweep.cpp $(SRCDIR)/equation_canonical.hpp $(SRCDIR)/nerdle_core.hpp
 	$(CXX) $(CXXFLAGS) -fopenmp -I$(SRCDIR) -o $(BINDIR)/$@ $(SRCDIR)/maxi_first_partition_sweep.cpp
+
+maxi_opening_partition_stats: $(SRCDIR)/maxi_opening_partition_stats.cpp $(SRCDIR)/nerdle_core.hpp
+	$(CXX) $(CXXFLAGS) -I$(SRCDIR) -o $(BINDIR)/$@ $(SRCDIR)/maxi_opening_partition_stats.cpp
 
 binerdle: $(SRCDIR)/binerdle.cpp $(SRCDIR)/nerdle_core.hpp
 	$(CXX) $(CXXFLAGS) -fopenmp -o $(BINDIR)/$@ $(SRCDIR)/binerdle.cpp
