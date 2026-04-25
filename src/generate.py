@@ -51,11 +51,17 @@ def valid_expressions(length: int, no_standalone_zero: bool = False,
 
 def safe_eval(expr: str):
     """
-    Evaluate an arithmetic expression string.
-    Returns a non-negative integer if the result is exact, else None.
-    Uses integer-division check: replace / with // and compare to float result.
+    Evaluate a flat arithmetic LHS (no parens, no spaces) the same way as src/generate.cpp.
+    - True division for /, * and / before + and -, left-associative within each level.
+    - After each + or - step, the running value may be negative; only the final value must
+      be a non-negative integer.
+    - Reject a leading + or - (no unary sign without brackets; this generator only yields
+      digit-leading strings, but this keeps the Python path aligned with the C++ checker).
+    Returns a non-negative int if the result is exact, else None.
     """
     try:
+        if not expr or not expr[0].isdigit():
+            return None
         # Float evaluation (Python uses true division)
         float_val = eval(expr)  # noqa: S307
         if not isinstance(float_val, (int, float)):
