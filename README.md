@@ -347,6 +347,19 @@ Exact-aggregate wall time: 34.57156782 s
 
 *Use `./bench_partition_aggregate` for the same binary and flags as `partition_report` (e.g. `--progress` for long runs). For very large pools, `--no-exact-aggregate` prints only the root model (EV, rounded distribution) without walking the full tree. If RAM is tight on Maxi, `--no-child-tables` skips per-bucket n×n feedback tables (slower, less memory).*
 
+**Maxi — unique‑symbol cascade (record).** A separate, heavy search (`cascade_9_to_4` style: restrict legal first guesses to equations that use at most **K** distinct tile symbols, then take the one with the largest **partition count** — distinct feedbacks vs the full Maxi pool). Off‑cloud batch output saved here so the numbers are not re-derived later:
+
+| K (max distinct symbols) | max_partitions | Equation |
+|---------------------------|---------------|----------|
+| 4 | 5478 | `25+5+22=52` |
+| 5 | 9161 | `22+1+21=44` |
+| 6 | 12321 | `244-211=33` |
+| 7 | 15593 | `42+2-11=33` |
+| 8 | 18557 | `46+2-12=36` |
+| 9 | 21678 | `48+2-14=36` |
+
+The **K = 10** (full symbol diversity) winner matches the max‑partition first guess from this repository — `kMaxiPartitionFixedOpening` in `src/partition_greedy.hpp` (`56+4-21=39`) and `./partition_report --pool data/equations_10.txt --tie-depth 6` on the generated pool. So the cascade and the in‑repo partition policy agree at the top level; the table above is the intermediate rungs (K = 4 … 9) only.
+
 ---
 
 ## Why different games favour different first guesses
