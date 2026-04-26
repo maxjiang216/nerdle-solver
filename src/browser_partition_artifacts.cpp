@@ -4,7 +4,7 @@
  * Usage:
  *   ./browser_partition_artifacts --pool data/equations_8.txt --kind classic --out web/data/partition
  *   ./browser_partition_artifacts --pool data/equations_6.txt --kind binerdle --out web/data/partition
- *   ./browser_partition_artifacts --pool data/equations_10.txt --kind classic --out web/data/partition --manifest-only
+ *   ./browser_partition_artifacts --pool data/equations_10.txt --kind classic --out web/data/partition --opening-buckets-only
  *   ./browser_partition_artifacts --write-maxi-manifest-only --out web/data/partition
  *
  * For each (pool, opening from partition_fixed_opening_tie6), writes:
@@ -126,6 +126,7 @@ int main(int argc, char** argv) {
     std::string kind = "classic";
     std::string out_root = "web/data/partition";
     bool manifest_only = false;
+    bool opening_buckets_only = false;
     bool write_maxi_manifest_only = false;
 
     for (int i = 1; i < argc; i++) {
@@ -138,11 +139,13 @@ int main(int argc, char** argv) {
             out_root = argv[++i];
         else if (a == "--manifest-only")
             manifest_only = true;
+        else if (a == "--opening-buckets-only")
+            opening_buckets_only = true;
         else if (a == "--write-maxi-manifest-only")
             write_maxi_manifest_only = true;
         else if (a == "-h" || a == "--help") {
             std::cerr << "Usage: browser_partition_artifacts --pool data/equations_N.txt [--kind classic|binerdle|quad] "
-                         "[--out web/data/partition] [--manifest-only]\n"
+                         "[--out web/data/partition] [--manifest-only|--opening-buckets-only]\n"
                          "       browser_partition_artifacts --write-maxi-manifest-only [--out web/data/partition]\n";
             return 1;
         }
@@ -273,6 +276,53 @@ int main(int argc, char** argv) {
 
         std::cout << "Wrote manifest-only artifact under " << subdir << " (opening "
                   << opening_display << ", pool " << equations.size() << ")\n";
+        return 0;
+    }
+
+    if (opening_buckets_only) {
+        std::filesystem::remove(subdir + "/pool_full.json");
+        ensure_dir(subdir + "/b");
+
+        std::unordered_map<uint32_t, std::vector<size_t>> buckets;
+        for (size_t si = 0; si < equations.size(); si++) {
+            uint32_t code = nerdle::compute_feedback_packed(opening, equations[si], N);
+            buckets[code].push_back(si);
+        }
+
+        for (auto& kv : buckets) {
+            uint32_t code = kv.first;
+            auto& vec = kv.second;
+            std::sort(vec.begin(), vec.end());
+
+            std::ostringstream body;
+            body << "[\n";
+            for (size_t i = 0; i < vec.size(); i++) {
+                size_t id = vec[i];
+                std::string disp = is_maxi ? maxi_to_display(equations[id]) : equations[id];
+                body << "  [" << id << "," << id << "," << json_escape(disp) << "]";
+                if (i + 1 < vec.size())
+                    body << ",";
+                body << "\n";
+            }
+            body << "]";
+            write_file(subdir + "/b/" + std::to_string(code) + ".json", body.str());
+        }
+
+        std::ostringstream man;
+        man << "{\n";
+        man << "  \"version\": 1,\n";
+        man << "  \"kind\": " << json_escape(kind) << ",\n";
+        man << "  \"n\": " << N << ",\n";
+        man << "  \"opening\": " << json_escape(opening_display) << ",\n";
+        man << "  \"poolSize\": " << equations.size() << ",\n";
+        man << "  \"bucketDir\": \"b\",\n";
+        man << "  \"hasPoolFull\": false,\n";
+        man << "  \"hasOpeningBuckets\": true\n";
+        man << "}\n";
+        write_file(subdir + "/manifest.json", man.str());
+
+        std::cout << "Wrote " << buckets.size() << " opening buckets under " << subdir << " (opening "
+                  << opening_display << ")\n";
         return 0;
     }
 

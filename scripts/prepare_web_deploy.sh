@@ -31,6 +31,7 @@ else
     data/equations_6.txt
     data/equations_7.txt
     data/equations_8.txt
+    data/equations_10.txt
   )
   for f in "${pools[@]}"; do
     if [[ ! -f "$f" ]]; then

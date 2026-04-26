@@ -19,8 +19,8 @@
       <div class="panel">
         <h3>Solver input</h3>
         <div class="toolbar">
-          <div class="strategy-toggle" id="strategy-toggle">
-            <button type="button" data-strat="bellman" id="btn-bellman">Bellman (optimal)</button>
+          <div class="strategy-toggle" id="strategy-toggle" hidden>
+            <button type="button" data-strat="bellman" id="btn-bellman" hidden>Bellman (optimal)</button>
             <button type="button" data-strat="partition" id="btn-partition">Partition</button>
           </div>
           <button type="button" class="btn btn-ghost" id="btn-reset">Reset</button>
@@ -53,7 +53,7 @@
         <div class="remaining-box" id="remaining">—</div>
         <p class="strategy-hint" id="remaining-note"></p>
         <footer class="note" style="margin-top:1rem">
-          Teal = correct spot, purple = wrong spot, black = not in equation. Click tiles to cycle colors; keys <kbd>g</kbd> <kbd>p</kbd> <kbd>b</kbd> set color and move right.
+          Teal = correct spot, purple = wrong spot, black = not in equation. First click on a tile selects it; later clicks cycle colors. <kbd>←</kbd> <kbd>→</kbd> move the highlight (wraps across boards in multi-board modes); <kbd>g</kbd> <kbd>p</kbd> <kbd>b</kbd> set color and move right. <kbd>Backspace</kbd> clears tile color; <kbd>Delete</kbd> erases the character; keypad ⌫ erases the character.
         </footer>
       </div>
     </div>

@@ -53,7 +53,8 @@ data/*
 !data/equations_6.txt
 !data/equations_7.txt
 !data/equations_8.txt
-equations_*.txt
+!data/equations_10.txt
+/equations_*.txt
 
 # Python
 __pycache__/

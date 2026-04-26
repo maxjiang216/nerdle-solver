@@ -65,19 +65,19 @@ browser_partition_data: browser_partition_artifacts micro_policy_web
 	./browser_partition_artifacts --pool data/equations_6.txt --kind classic --out $(BROWSER_PARTITION_OUT)
 	./browser_partition_artifacts --pool data/equations_7.txt --kind classic --out $(BROWSER_PARTITION_OUT)
 	./browser_partition_artifacts --pool data/equations_8.txt --kind classic --out $(BROWSER_PARTITION_OUT)
-	./browser_partition_artifacts --pool data/equations_10.txt --kind classic --out $(BROWSER_PARTITION_OUT) --manifest-only
+	./browser_partition_artifacts --pool data/equations_10.txt --kind classic --out $(BROWSER_PARTITION_OUT) --opening-buckets-only
 	./browser_partition_artifacts --pool data/equations_6.txt --kind binerdle --out $(BROWSER_PARTITION_OUT)
 	./browser_partition_artifacts --pool data/equations_8.txt --kind binerdle --out $(BROWSER_PARTITION_OUT)
 	./browser_partition_artifacts --pool data/equations_8.txt --kind quad --out $(BROWSER_PARTITION_OUT)
 
-# Same as browser_partition_data but Maxi is a static manifest only (no data/equations_10.txt).
+# Same as browser_partition_data but Maxi skips canonical rank/full-pool output for fast Vercel builds.
 .PHONY: browser_partition_data_web
 browser_partition_data_web: browser_partition_artifacts micro_policy_web
 	./browser_partition_artifacts --pool data/equations_5.txt --kind classic --out $(BROWSER_PARTITION_OUT)
 	./browser_partition_artifacts --pool data/equations_6.txt --kind classic --out $(BROWSER_PARTITION_OUT)
 	./browser_partition_artifacts --pool data/equations_7.txt --kind classic --out $(BROWSER_PARTITION_OUT)
 	./browser_partition_artifacts --pool data/equations_8.txt --kind classic --out $(BROWSER_PARTITION_OUT)
-	./browser_partition_artifacts --write-maxi-manifest-only --out $(BROWSER_PARTITION_OUT)
+	./browser_partition_artifacts --pool data/equations_10.txt --kind classic --out $(BROWSER_PARTITION_OUT) --opening-buckets-only
 	./browser_partition_artifacts --pool data/equations_6.txt --kind binerdle --out $(BROWSER_PARTITION_OUT)
 	./browser_partition_artifacts --pool data/equations_8.txt --kind binerdle --out $(BROWSER_PARTITION_OUT)
 	./browser_partition_artifacts --pool data/equations_8.txt --kind quad --out $(BROWSER_PARTITION_OUT)
