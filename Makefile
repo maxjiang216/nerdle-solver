@@ -44,7 +44,7 @@ nerdle: $(SRCDIR)/nerdle.cpp $(SRCDIR)/nerdle_interactive.cpp $(SRCDIR)/nerdle_i
 nerdle_micro: $(SRCDIR)/nerdle_micro.cpp $(SRCDIR)/nerdle_interactive.cpp $(SRCDIR)/nerdle_interactive.hpp $(SRCDIR)/bench_solve.hpp $(SRCDIR)/equation_canonical.hpp $(SRCDIR)/nerdle_core.hpp $(SRCDIR)/micro_policy.hpp $(SRCDIR)/optimal_policy_build.hpp
 	$(CXX) $(CXXFLAGS) -o $(BINDIR)/$@ $(SRCDIR)/nerdle_micro.cpp $(SRCDIR)/nerdle_interactive.cpp
 
-solver_json: $(SRCDIR)/solver_json.cpp $(SRCDIR)/bench_solve.hpp $(SRCDIR)/equation_canonical.hpp $(SRCDIR)/nerdle_core.hpp $(SRCDIR)/micro_policy.hpp
+solver_json: $(SRCDIR)/solver_json.cpp $(SRCDIR)/bench_solve.hpp $(SRCDIR)/binerdle_partition.hpp $(SRCDIR)/equation_canonical.hpp $(SRCDIR)/nerdle_core.hpp $(SRCDIR)/micro_policy.hpp $(SRCDIR)/quad_partition.hpp
 	$(CXX) $(CXXFLAGS) -fopenmp -o $(BINDIR)/$@ $(SRCDIR)/solver_json.cpp
 
 partition_report: $(SRCDIR)/partition_report.cpp $(SRCDIR)/equation_canonical.hpp $(SRCDIR)/nerdle_core.hpp
@@ -73,13 +73,13 @@ maxi_first_partition_sweep: $(SRCDIR)/maxi_first_partition_sweep.cpp $(SRCDIR)/e
 maxi_opening_partition_stats: $(SRCDIR)/maxi_opening_partition_stats.cpp $(SRCDIR)/nerdle_core.hpp
 	$(CXX) $(CXXFLAGS) -I$(SRCDIR) -o $(BINDIR)/$@ $(SRCDIR)/maxi_opening_partition_stats.cpp
 
-binerdle: $(SRCDIR)/binerdle.cpp $(SRCDIR)/nerdle_core.hpp
+binerdle: $(SRCDIR)/binerdle.cpp $(SRCDIR)/binerdle_partition.hpp $(SRCDIR)/nerdle_core.hpp
 	$(CXX) $(CXXFLAGS) -fopenmp -o $(BINDIR)/$@ $(SRCDIR)/binerdle.cpp
 
-bench_binerdle: $(SRCDIR)/bench_binerdle.cpp
+bench_binerdle: $(SRCDIR)/bench_binerdle.cpp $(SRCDIR)/binerdle_partition.hpp $(SRCDIR)/nerdle_core.hpp
 	$(CXX) $(CXXFLAGS) -fopenmp -o $(BINDIR)/$@ $<
 
-quadnerdle: $(SRCDIR)/quadnerdle.cpp $(SRCDIR)/nerdle_core.hpp
+quadnerdle: $(SRCDIR)/quadnerdle.cpp $(SRCDIR)/binerdle_partition.hpp $(SRCDIR)/quad_partition.hpp $(SRCDIR)/nerdle_core.hpp
 	$(CXX) $(CXXFLAGS) -fopenmp -o $(BINDIR)/$@ $(SRCDIR)/quadnerdle.cpp
 
 bench_quadnerdle: $(SRCDIR)/bench_quadnerdle.cpp
