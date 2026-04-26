@@ -259,12 +259,30 @@ class PartitionGreedyEvaluator {
 };
 
 /**
- * Fixed opening recommended for 10-tile (6-try) Maxi under partition: exact max-partition winner
- * over `data/equations_10.txt` (sweep / winners). Interactive and solver_json use this for the
- * first suggestion when still in the candidate set; the generic best_guess_partition_policy does
- * not special-case the opening.
+ * Fixed opening recommended for 10-tile (6-try) Maxi under partition: max-partition winner on the
+ * current `data/equations_10.txt` (see `maxi_first_partition_sweep` 10-distinct stage). Interactive
+ * and solver_json use this for the first suggestion when still in the candidate set.
  */
-inline constexpr const char* kMaxiPartitionFixedOpening = "58+2-13=47";
+inline constexpr const char* kMaxiPartitionFixedOpening = "56+4-21=39";
+
+/**
+ * Fixed first guess (partition, tie_depth=6 on the canonical pool) for Micro: `data/equations_5.txt`.
+ */
+inline constexpr const char* kMicroPartitionFixedOpening = "3+2=5";
+/**
+ * Fixed first guess (partition, tie_depth=6) for Mini: `data/equations_6.txt`.
+ */
+inline constexpr const char* kMiniPartitionFixedOpening = "4*7=28";
+/**
+ * Fixed first guess (partition, tie_depth=6) for Midi: `data/equations_7.txt`.
+ */
+inline constexpr const char* kMidiPartitionFixedOpening = "6+25=31";
+
+/**
+ * Fixed opening for 8-tile Classic under partition: max-partition first guess on the current
+ * `data/equations_8.txt` pool. Interactive and solver_json use it when that row is in candidates.
+ */
+inline constexpr const char* kClassicPartitionFixedOpening = "52-34=18";
 
 /**
  * Heuristic: cheap greedy max-partition (tie_depth=0) when the filtered set is large; enable
@@ -277,13 +295,30 @@ inline int maxi_partition_tie_depth_for_interactive(size_t num_candidates) {
     return 0;
 }
 
+/** `./nerdle --strategy partition` uses this tie depth (aligns with `partition_report --tie-depth 6`). */
+inline constexpr int kPartitionInteractiveTieDepth = 6;
+
+/** Hardcoded first guess for partition at tile lengths 5,6,7,8,10; nullptr if `n` is unsupported. */
+inline const char* partition_fixed_opening_tie6(int n) {
+    switch (n) {
+    case 5: return kMicroPartitionFixedOpening;
+    case 6: return kMiniPartitionFixedOpening;
+    case 7: return kMidiPartitionFixedOpening;
+    case 8: return kClassicPartitionFixedOpening;
+    case 10: return kMaxiPartitionFixedOpening;
+    default: return nullptr;
+    }
+}
+
 /**
  * partition tie_depth: 0 = greedy max feedback classes only (no extra tiebreaks);
  * 1+ = on ties, compare solve distribution to that depth.
  */
 inline std::string best_guess_partition_policy(const std::vector<std::string>& all_eqs,
                                               const std::vector<size_t>& candidate_indices, int N,
-                                              int tries_remaining, int partition_tie_depth = 0) {
+                                              int tries_remaining, int partition_tie_depth = 0,
+                                              PartitionFbBudget fb_budget = PartitionFbBudget::Interactive,
+                                              const std::vector<uint32_t>* shared_full_fb = nullptr) {
     if (candidate_indices.empty())
         return "";
     if (candidate_indices.size() == 1)
@@ -291,7 +326,10 @@ inline std::string best_guess_partition_policy(const std::vector<std::string>& a
     if (tries_remaining < 1)
         return all_eqs[candidate_indices[0]];
 
-    PartitionGreedyEvaluator ev(all_eqs, N, tries_remaining, partition_tie_depth, PartitionFbBudget::Interactive);
+    /* When shared_full_fb is set (n×n, row-major g,s), no matrix alloc/build per call — crucial for
+     * tools (e.g. partition_report exact-aggregate) that call this at every game-tree node. */
+    PartitionGreedyEvaluator ev(all_eqs, N, tries_remaining, partition_tie_depth, fb_budget,
+                                shared_full_fb);
     ev.build_feedback_matrix();
     return ev.best_guess_string(candidate_indices, tries_remaining);
 }

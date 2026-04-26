@@ -50,7 +50,7 @@ inline const std::unordered_map<int, std::string>& first_guess_map() {
         {6, "4*7=28"},
         {7, "4+27=31"},
         {8, "48-32=16"},
-        {10, "76+1-23=54"},
+        {10, "56+4-21=39"},
     };
     return m;
 }

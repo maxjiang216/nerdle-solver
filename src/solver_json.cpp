@@ -40,7 +40,7 @@ constexpr unsigned char PLACE_SQ = '\x01';
 constexpr unsigned char PLACE_CB = '\x02';
 
 const std::unordered_map<int, std::string> FIRST_GUESS = {
-    {5, "3+2=5"},   {6, "4*7=28"}, {7, "4+27=31"}, {8, "48-32=16"}, {10, "76+1-23=54"},
+    {5, "3+2=5"},   {6, "4*7=28"}, {7, "4+27=31"}, {8, "48-32=16"}, {10, "56+4-21=39"},
 };
 
 const std::unordered_map<int, std::string> FIRST_GUESS_BINERDLE = {
@@ -683,23 +683,23 @@ int main() {
         const int tries_left = detail::MAX_TRIES_CLASSIC - turn;
         std::string guess;
         if (strategy == PlayStrategy::Partition) {
-            if (is_maxi) {
-                if (req.history.empty()) {
-                    guess.clear();
+            const int ptd = nerdle::kPartitionInteractiveTieDepth;
+            if (req.history.empty()) {
+                guess.clear();
+                if (const char* fo = nerdle::partition_fixed_opening_tie6(N)) {
                     for (size_t idx : candidates) {
-                        if (equations[idx] == nerdle::kMaxiPartitionFixedOpening) {
+                        if (equations[idx] == fo) {
                             guess = equations[idx];
                             break;
                         }
                     }
-                    if (guess.empty())
-                        guess = nerdle::best_guess_partition_policy(equations, candidates, N, std::max(1, tries_left), 0);
-                } else {
-                    const int td = nerdle::maxi_partition_tie_depth_for_interactive(candidates.size());
-                    guess = nerdle::best_guess_partition_policy(equations, candidates, N, std::max(1, tries_left), td);
                 }
+                if (guess.empty())
+                    guess = nerdle::best_guess_partition_policy(
+                        equations, candidates, N, std::max(1, tries_left), ptd);
             } else {
-                guess = nerdle::best_guess_partition_policy(equations, candidates, N, std::max(1, tries_left), 0);
+                guess = nerdle::best_guess_partition_policy(
+                    equations, candidates, N, std::max(1, tries_left), ptd);
             }
         } else if (((strategy == PlayStrategy::Bellman && N == 5) ||
                     (strategy == PlayStrategy::Optimal && N == 6)) &&

@@ -2,6 +2,14 @@
  * Generate all valid N-character Nerdle equations.
  * Uses OpenMP for parallel evaluation. No standalone 0 on LHS by default.
  *
+ * Evaluation matches official Nerdle for Micro…Classic (no ²/³, no parens in this generator):
+ * - Standard precedence: * and / before + and -, left-associative at each level.
+ * - True division for / (8/3*6=16 is valid; integer division is not used).
+ * - After each + or - step, a negative running value is allowed (1-3+11=9).
+ * - The final evaluated LHS value must be a non-negative integer (the RHS in the file).
+ * - No unary + or -: the LHS is built only from number tokens and binary operators, so
+ *   expressions do not start with a sign; the evaluator also rejects a leading - or +.
+ *
  * Compile: g++ -O3 -std=c++17 -fopenmp -o generate generate.cpp
  * Run:     ./generate              # classic 8-char (LHS has ≥1 op, no standalone 0)
  *          ./generate --len 5     # micro 5-char
@@ -12,6 +20,7 @@
 #include "equation_canonical.hpp"
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <cstdlib>
 #include <fstream>
@@ -27,7 +36,8 @@ static std::string out_dir = "data";
 
 // ---------------------------------------------------------------------------
 // Expression evaluator (operator precedence: * / before + -)
-// Uses float division like Python's eval. Returns -1 on error or non-integer/negative result.
+// Uses true float division. Returns -1 on error or if the final value is not a non-negative
+// integer. Intermediate values after + or - may be negative; intermediate terms may be fractional.
 // ---------------------------------------------------------------------------
 
 struct Parser {
@@ -90,6 +100,8 @@ struct Parser {
 
 // Returns result if valid (non-negative integer), else -1
 long long safe_eval(const std::string& expr) {
+    if (expr.empty() || !std::isdigit(static_cast<unsigned char>(expr[0])))
+        return -1; // no unary + or - (matches Nerdle: no leading sign without parens; we have no parens)
     Parser p(expr);
     double r = p.parse_expr();
     if (r < 0 || !p.eof() || r != r) return -1;  // NaN check, negative result

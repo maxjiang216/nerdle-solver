@@ -1,6 +1,6 @@
 /**
  * Exact guess-count distribution for the entropy (v2) strategy using the same
- * "partition tree" as bench_partition_aggregate: at each state the secret is
+ * "partition tree" as partition_report (exact aggregate): at each state the secret is
  * uniform on the candidate set, so we group by feedback and recurse.
  *
  * Matches bench_solve / bench_nerdle for PlayStrategy::Entropy: fixed first
@@ -43,7 +43,7 @@ inline const std::string& fixed_first_guess(int N) {
         {6, "4*7=28"},
         {7, "4+27=31"},
         {8, "48-32=16"},
-        {10, "76+1-23=54"},
+        {10, "56+4-21=39"},
     };
     static const std::string empty;
     auto it = m.find(N);
