@@ -32,12 +32,27 @@ optimal_expected
 optimal_subgame
 partition_report
 solver_json
+browser_partition_artifacts
 test_fb
 trace_target
+
+web/node_modules/
+web/partition_node.cjs
+web/micro_node.cjs
+trace_target
+
+# Web deploy: generated at build time (Vercel / prepare_web_deploy)
+web/data/partition/**
+!web/data/partition/.gitkeep
+web/app.bundle.js
 
 # Generated data (run ./generate or ./generate_maxi to create)
 data/*
 !data/.gitkeep
+!data/equations_5.txt
+!data/equations_6.txt
+!data/equations_7.txt
+!data/equations_8.txt
 equations_*.txt
 
 # Python

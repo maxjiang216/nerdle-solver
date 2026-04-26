@@ -1,0 +1,5 @@
+{
+  "installCommand": "npm ci --prefix web",
+  "buildCommand": "bash ./scripts/prepare_web_deploy.sh",
+  "outputDirectory": "web"
+}

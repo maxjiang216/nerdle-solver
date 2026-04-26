@@ -4,9 +4,9 @@ CXXFLAGS = -O3 -std=c++17
 SRCDIR = src
 BINDIR = .
 
-.PHONY: all clean micro_policy mini_policy canonical_tables report_partition_8 report_partition_maxi compare_first_8 list_partition_failures_8 maxi_unique_partition_sample maxi_first_partition_sweep maxi_opening_partition_stats
+.PHONY: all clean micro_policy mini_policy canonical_tables report_partition_8 report_partition_maxi compare_first_8 list_partition_failures_8 maxi_unique_partition_sample maxi_first_partition_sweep maxi_opening_partition_stats browser_partition_data browser_partition_data_web prepare_web_deploy
 
-all: generate generate_maxi solve solve_adaptive solve_binerdle solve_quadnerdle bench_nerdle bench_partition_aggregate bench_entropy_aggregate nerdle nerdle_micro binerdle bench_binerdle quadnerdle bench_quadnerdle optimal_expected optimal_subgame midi_exact compare_subgame_entropy compare_full_restricted_subgame explore_first_guess first_guess_tiered_sim first_guess_recursive_ev first_guess_staged_sample trace_target compare_bellman solver_json compare_first_8 list_partition_failures_8 maxi_unique_partition_sample maxi_first_partition_sweep partition_report
+all: generate generate_maxi solve solve_adaptive solve_binerdle solve_quadnerdle bench_nerdle bench_partition_aggregate bench_entropy_aggregate nerdle nerdle_micro binerdle bench_binerdle quadnerdle bench_quadnerdle optimal_expected optimal_subgame midi_exact compare_subgame_entropy compare_full_restricted_subgame explore_first_guess first_guess_tiered_sim first_guess_recursive_ev first_guess_staged_sample trace_target compare_bellman solver_json compare_first_8 list_partition_failures_8 maxi_unique_partition_sample maxi_first_partition_sweep partition_report browser_partition_artifacts
 
 generate: $(SRCDIR)/generate.cpp $(SRCDIR)/equation_canonical.hpp
 	$(CXX) $(CXXFLAGS) -fopenmp -I$(SRCDIR) -o $(BINDIR)/$@ $(SRCDIR)/generate.cpp
@@ -46,6 +46,45 @@ nerdle_micro: $(SRCDIR)/nerdle_micro.cpp $(SRCDIR)/nerdle_interactive.cpp $(SRCD
 
 solver_json: $(SRCDIR)/solver_json.cpp $(SRCDIR)/bench_solve.hpp $(SRCDIR)/binerdle_partition.hpp $(SRCDIR)/equation_canonical.hpp $(SRCDIR)/nerdle_core.hpp $(SRCDIR)/micro_policy.hpp $(SRCDIR)/quad_partition.hpp
 	$(CXX) $(CXXFLAGS) -fopenmp -o $(BINDIR)/$@ $(SRCDIR)/solver_json.cpp
+
+browser_partition_artifacts: $(SRCDIR)/browser_partition_artifacts.cpp $(SRCDIR)/partition_greedy.hpp $(SRCDIR)/equation_canonical.hpp $(SRCDIR)/nerdle_core.hpp $(SRCDIR)/micro_policy.hpp
+	$(CXX) $(CXXFLAGS) -fopenmp -I$(SRCDIR) -o $(BINDIR)/$@ $(SRCDIR)/browser_partition_artifacts.cpp
+
+# Copy Micro Bellman policy for static web (use committed web/data copy, or data/ after make micro_policy)
+.PHONY: micro_policy_web
+micro_policy_web:
+	@mkdir -p web/data
+	@test -f web/data/optimal_policy_5.bin || test -f data/optimal_policy_5.bin || (echo "missing Micro policy — add web/data/optimal_policy_5.bin or run: make micro_policy" && exit 1)
+	@if [ -f web/data/optimal_policy_5.bin ]; then :; else cp -f data/optimal_policy_5.bin web/data/optimal_policy_5.bin; fi
+
+# Static JSON for browser partition mode (requires generated data/equations_*.txt)
+BROWSER_PARTITION_OUT = web/data/partition
+.PHONY: browser_partition_data
+browser_partition_data: browser_partition_artifacts micro_policy_web
+	./browser_partition_artifacts --pool data/equations_5.txt --kind classic --out $(BROWSER_PARTITION_OUT)
+	./browser_partition_artifacts --pool data/equations_6.txt --kind classic --out $(BROWSER_PARTITION_OUT)
+	./browser_partition_artifacts --pool data/equations_7.txt --kind classic --out $(BROWSER_PARTITION_OUT)
+	./browser_partition_artifacts --pool data/equations_8.txt --kind classic --out $(BROWSER_PARTITION_OUT)
+	./browser_partition_artifacts --pool data/equations_10.txt --kind classic --out $(BROWSER_PARTITION_OUT) --manifest-only
+	./browser_partition_artifacts --pool data/equations_6.txt --kind binerdle --out $(BROWSER_PARTITION_OUT)
+	./browser_partition_artifacts --pool data/equations_8.txt --kind binerdle --out $(BROWSER_PARTITION_OUT)
+	./browser_partition_artifacts --pool data/equations_8.txt --kind quad --out $(BROWSER_PARTITION_OUT)
+
+# Same as browser_partition_data but Maxi is a static manifest only (no data/equations_10.txt).
+.PHONY: browser_partition_data_web
+browser_partition_data_web: browser_partition_artifacts micro_policy_web
+	./browser_partition_artifacts --pool data/equations_5.txt --kind classic --out $(BROWSER_PARTITION_OUT)
+	./browser_partition_artifacts --pool data/equations_6.txt --kind classic --out $(BROWSER_PARTITION_OUT)
+	./browser_partition_artifacts --pool data/equations_7.txt --kind classic --out $(BROWSER_PARTITION_OUT)
+	./browser_partition_artifacts --pool data/equations_8.txt --kind classic --out $(BROWSER_PARTITION_OUT)
+	./browser_partition_artifacts --write-maxi-manifest-only --out $(BROWSER_PARTITION_OUT)
+	./browser_partition_artifacts --pool data/equations_6.txt --kind binerdle --out $(BROWSER_PARTITION_OUT)
+	./browser_partition_artifacts --pool data/equations_8.txt --kind binerdle --out $(BROWSER_PARTITION_OUT)
+	./browser_partition_artifacts --pool data/equations_8.txt --kind quad --out $(BROWSER_PARTITION_OUT)
+
+# Full static web rebuild (pools + optional micro_policy + partition JSON + esbuild bundle)
+prepare_web_deploy:
+	./scripts/prepare_web_deploy.sh
 
 partition_report: $(SRCDIR)/partition_report.cpp $(SRCDIR)/equation_canonical.hpp $(SRCDIR)/nerdle_core.hpp
 	$(CXX) $(CXXFLAGS) -fopenmp -I$(SRCDIR) -o $(BINDIR)/$@ $(SRCDIR)/partition_report.cpp
@@ -147,4 +186,4 @@ clean:
 	      $(BINDIR)/solver_json $(BINDIR)/partition_report $(BINDIR)/compare_first_8 \
 	      $(BINDIR)/list_partition_failures_8 $(BINDIR)/maxi_unique_partition_sample \
 	      $(BINDIR)/maxi_first_partition_sweep $(BINDIR)/bench_partition_aggregate \
-	      $(BINDIR)/bench_entropy_aggregate
+	      $(BINDIR)/bench_entropy_aggregate $(BINDIR)/browser_partition_artifacts
