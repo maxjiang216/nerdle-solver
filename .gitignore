@@ -1,4 +1,4 @@
-# Binaries
+# Binaries (make leaves these in repo root; do not commit)
 generate
 generate_maxi
 solve
@@ -14,14 +14,26 @@ nerdle_micro
 binerdle
 quadnerdle
 bench_quadnerdle
+compare_bellman
 compare_first_8
+compare_full_restricted_subgame
+compare_subgame_entropy
+equation_canonical_table
+explore_first_guess
+first_guess_recursive_ev
+first_guess_staged_sample
+first_guess_tiered_sim
 list_partition_failures_8
 maxi_first_partition_sweep
 maxi_opening_partition_stats
 maxi_unique_partition_sample
+midi_exact
+optimal_expected
+optimal_subgame
 partition_report
 solver_json
 test_fb
+trace_target
 
 # Generated data (run ./generate or ./generate_maxi to create)
 data/*
