@@ -4,6 +4,7 @@
 #include "nerdle_core.hpp"
 #include "optimal_policy_build.hpp"
 
+#include <cctype>
 #include <fstream>
 #include <iostream>
 #include <random>
@@ -26,7 +27,7 @@ const std::unordered_map<int, std::string> FIRST_GUESS = {
     {6, "4*7=28"},
     {7, "4+27=31"},
     {8, "48-32=16"},
-    {10, "76+1-23=54"},
+    {10, "56+4-21=39"},
 };
 
 std::string normalize_maxi(std::string s) {
@@ -70,6 +71,29 @@ std::string normalize_input(const std::string& s, bool is_maxi) {
 }
 
 using PlayStrategy = nerdle_bench::PlayStrategy;
+
+/** Length `n`, only B/G/P (any case) — user means “I played the suggested guess and got this feedback.” */
+bool is_bgp_feedback_shorthand(const std::string& s, int n) {
+    if (static_cast<int>(s.size()) != n)
+        return false;
+    for (unsigned char uc : s) {
+        const int u = std::toupper(uc);
+        if (u != 'B' && u != 'G' && u != 'P')
+            return false;
+    }
+    return true;
+}
+
+/** true = start a new game; false = exit. */
+bool prompt_new_game_or_quit() {
+    std::cout << "r = new game, q = quit (Enter = new game): ";
+    std::string line;
+    if (!std::getline(std::cin, line))
+        return false;
+    if (line == "q" || line == "Q" || line == "quit")
+        return false;
+    return true; // r, Enter, or anything else → new game
+}
 
 /** If `fixed` is a row in `candidate_indices`, return it; else empty (UTF-8 already normalized in pool). */
 std::string partition_fixed_if_in_pool(const std::vector<std::string>& equations,
@@ -171,90 +195,114 @@ int run(const Config& cfg) {
     else if (strategy == PlayStrategy::Optimal && N == 6)
         std::cout << "Strategy: optimal (unique min E[guesses], precomputed Mini policy).\n";
     else if (strategy == PlayStrategy::Partition) {
-        if (N == 10)
-            std::cout << "Strategy: partition — fixed opening " << nerdle::kMaxiPartitionFixedOpening
-                      << " (if in pool), then max distinct feedbacks; tie depth 0 when |C|>512, "
-                         "else 1 among equal-partition ties.\n";
-        else if (N == 8)
-            std::cout << "Strategy: partition — fixed opening " << nerdle::kClassicPartitionFixedOpening
-                      << " (if in pool), then max distinct feedbacks; deeper tie-breaks only on ties.\n";
+        const char* fixed_opening = nerdle::partition_fixed_opening_tie6(N);
+        std::cout << "Strategy: partition — max distinct feedbacks; tie_depth="
+                  << nerdle::kPartitionInteractiveTieDepth << " on equal-partition ties";
+        if (fixed_opening)
+            std::cout << "; suggest " << fixed_opening << " when in pool (first turn)\n";
         else
-            std::cout << "Strategy: partition — maximize feedback classes; deeper tie-breaks only on ties.\n";
+            std::cout << "\n";
     }
     else
         std::cout << "Strategy: entropy (v2).\n";
     std::cout << "\n";
 
-    std::vector<size_t> candidates;
-    for (size_t i = 0; i < equations.size(); i++)
-        candidates.push_back(i);
-    std::unordered_set<size_t> candidate_set(candidates.begin(), candidates.end());
-
-    std::string guess;
-    if (strategy == PlayStrategy::Partition) {
-        if (is_maxi) {
-            std::string fixed =
-                partition_fixed_if_in_pool(equations, candidates, nerdle::kMaxiPartitionFixedOpening);
-            guess = !fixed.empty() ? fixed
-                                   : nerdle::best_guess_partition_policy(equations, candidates, N, MAX_TRIES, 0);
-        } else if (N == 8) {
-            std::string fixed =
-                partition_fixed_if_in_pool(equations, candidates, nerdle::kClassicPartitionFixedOpening);
-            guess = !fixed.empty() ? fixed
-                                   : nerdle::best_guess_partition_policy(equations, candidates, N, MAX_TRIES, 0);
-        } else
-            guess = nerdle::best_guess_partition_policy(equations, candidates, N, MAX_TRIES, 0);
-    } else if (((strategy == PlayStrategy::Bellman && N == 5) ||
-                (strategy == PlayStrategy::Optimal && N == 6)) &&
-               micro_policy_ok) {
-        std::vector<size_t> all_idx(equations.size());
-        for (size_t i = 0; i < equations.size(); i++)
-            all_idx[i] = i;
-        guess = nerdle::guess_from_micro_policy(micro_policy, equations, all_idx);
-        if (guess.empty())
-            guess = FIRST_GUESS.at(N);
-    } else {
-        guess = FIRST_GUESS.at(N);
-    }
     auto display = [is_maxi](const std::string& s) { return is_maxi ? maxi_to_display(s) : s; };
 
+    int game_num = 0;
+next_game:
+    while (true) {
+        if (game_num > 0)
+            std::cout << "\n— New game —\n\n";
+        ++game_num;
+
+        std::vector<size_t> candidates;
+        for (size_t i = 0; i < equations.size(); i++)
+            candidates.push_back(i);
+        std::unordered_set<size_t> candidate_set(candidates.begin(), candidates.end());
+        hist.clear();
+
+        std::string guess;
+        if (strategy == PlayStrategy::Partition) {
+            const int ptd = nerdle::kPartitionInteractiveTieDepth;
+            const char* fixed_c = nerdle::partition_fixed_opening_tie6(N);
+            std::string fixed = fixed_c ? partition_fixed_if_in_pool(equations, candidates, fixed_c) : "";
+            guess = !fixed.empty() ? fixed
+                                   : nerdle::best_guess_partition_policy(
+                                         equations, candidates, N, MAX_TRIES, ptd);
+        } else if (((strategy == PlayStrategy::Bellman && N == 5) ||
+                    (strategy == PlayStrategy::Optimal && N == 6)) &&
+                   micro_policy_ok) {
+            std::vector<size_t> all_idx(equations.size());
+            for (size_t i = 0; i < equations.size(); i++)
+                all_idx[i] = i;
+            guess = nerdle::guess_from_micro_policy(micro_policy, equations, all_idx);
+            if (guess.empty())
+                guess = FIRST_GUESS.at(N);
+        } else {
+            guess = FIRST_GUESS.at(N);
+        }
+
     for (int turn = 1; turn <= MAX_TRIES; turn++) {
+        if (candidates.size() == 1) {
+            std::cout << "\nOnly one equation is possible: " << display(equations[candidates[0]]) << "\n";
+            if (!prompt_new_game_or_quit())
+                return 0;
+            goto next_game;
+        }
         std::cout << "Guess " << turn << "/" << MAX_TRIES << "  (" << candidates.size()
                   << " candidates)\n";
         std::cout << "  Suggested: " << display(guess) << "\n";
-        std::cout << "  Your guess (Enter=suggested): ";
+        std::cout << "  Your guess (Enter = suggested; or " << N
+                  << " letters B/G/P only = use suggested + that feedback): ";
         std::string user_guess;
         std::getline(std::cin, user_guess);
         if (user_guess == "q" || user_guess == "quit")
             return 0;
-        if (!user_guess.empty() && static_cast<int>(user_guess.size()) >= N) {
+
+        std::string feedback;
+        const bool bgp_shorthand = is_bgp_feedback_shorthand(user_guess, N);
+        if (bgp_shorthand) {
+            feedback = user_guess;
+            for (char& c : feedback)
+                c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+        } else if (!user_guess.empty() && static_cast<int>(user_guess.size()) >= N) {
             std::string norm = normalize_input(user_guess, is_maxi);
             if (static_cast<int>(norm.size()) == N)
                 guess = norm;
         }
-        std::cout << "  Using: " << display(guess) << "\n\n";
 
-        std::cout << "  Feedback (" << N << " chars G/P/B, or 'y' if correct): ";
-        std::string feedback;
-        std::getline(std::cin, feedback);
-        if (feedback == "q" || feedback == "quit")
-            return 0;
-        if (feedback == "y" || feedback == "Y") {
-            std::cout << "\n✓ Solved in " << turn << " guess(es)!\n";
-            return 0;
-        }
-        while (static_cast<int>(feedback.size()) != N) {
-            std::cout << "  Enter " << N << " characters: ";
+        std::cout << "  Using: " << display(guess) << "\n";
+        if (bgp_shorthand)
+            std::cout << "  (treating line as feedback for the suggested guess; skipping feedback prompt)\n";
+        std::cout << "\n";
+
+        if (!bgp_shorthand) {
+            std::cout << "  Feedback (" << N << " chars G/P/B, or 'y' if correct): ";
             std::getline(std::cin, feedback);
             if (feedback == "q" || feedback == "quit")
                 return 0;
+            if (feedback == "y" || feedback == "Y") {
+                std::cout << "\n✓ Solved in " << turn << " guess(es)!\n";
+                if (!prompt_new_game_or_quit())
+                    return 0;
+                goto next_game;
+            }
+            while (static_cast<int>(feedback.size()) != N) {
+                std::cout << "  Enter " << N << " characters: ";
+                std::getline(std::cin, feedback);
+                if (feedback == "q" || feedback == "quit")
+                    return 0;
+            }
+            for (char& c : feedback)
+                c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
         }
-        for (char& c : feedback)
-            c = (char)std::toupper(c);
 
         if (feedback == std::string(N, 'G')) {
             std::cout << "\n✓ Solved in " << turn << " guess(es)!\n";
-            return 0;
+            if (!prompt_new_game_or_quit())
+                return 0;
+            goto next_game;
         }
 
         std::vector<size_t> next_candidates;
@@ -270,15 +318,15 @@ int run(const Config& cfg) {
 
         if (candidates.empty()) {
             std::cout << "\nNo candidates remain. Check your feedback.\n";
-            return 1;
+            if (!prompt_new_game_or_quit())
+                return 0;
+            goto next_game;
         }
 
         if (strategy == PlayStrategy::Partition) {
-            if (is_maxi) {
-                const int td = nerdle::maxi_partition_tie_depth_for_interactive(candidates.size());
-                guess = nerdle::best_guess_partition_policy(equations, candidates, N, MAX_TRIES - turn, td);
-            } else
-                guess = nerdle::best_guess_partition_policy(equations, candidates, N, MAX_TRIES - turn, 0);
+            const int ptd = nerdle::kPartitionInteractiveTieDepth;
+            guess = nerdle::best_guess_partition_policy(
+                equations, candidates, N, MAX_TRIES - turn, ptd);
         } else if (((strategy == PlayStrategy::Bellman && N == 5) ||
                     (strategy == PlayStrategy::Optimal && N == 6)) &&
                    micro_policy_ok) {
@@ -294,7 +342,10 @@ int run(const Config& cfg) {
     }
 
     std::cout << "Out of tries. Possible: " << display(equations[candidates[0]]) << "\n";
-    return 0;
+    if (!prompt_new_game_or_quit())
+        return 0;
+    goto next_game;
+    }
 }
 
 } // namespace nerdle_interactive

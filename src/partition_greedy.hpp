@@ -259,12 +259,24 @@ class PartitionGreedyEvaluator {
 };
 
 /**
- * Fixed opening recommended for 10-tile (6-try) Maxi under partition: exact max-partition winner
- * over `data/equations_10.txt` (sweep / winners). Interactive and solver_json use this for the
- * first suggestion when still in the candidate set; the generic best_guess_partition_policy does
- * not special-case the opening.
+ * Fixed opening recommended for 10-tile (6-try) Maxi under partition: max-partition winner on the
+ * current `data/equations_10.txt` (see `maxi_first_partition_sweep` 10-distinct stage). Interactive
+ * and solver_json use this for the first suggestion when still in the candidate set.
  */
-inline constexpr const char* kMaxiPartitionFixedOpening = "58+2-13=47";
+inline constexpr const char* kMaxiPartitionFixedOpening = "56+4-21=39";
+
+/**
+ * Fixed first guess (partition, tie_depth=6 on the canonical pool) for Micro: `data/equations_5.txt`.
+ */
+inline constexpr const char* kMicroPartitionFixedOpening = "3+2=5";
+/**
+ * Fixed first guess (partition, tie_depth=6) for Mini: `data/equations_6.txt`.
+ */
+inline constexpr const char* kMiniPartitionFixedOpening = "4*7=28";
+/**
+ * Fixed first guess (partition, tie_depth=6) for Midi: `data/equations_7.txt`.
+ */
+inline constexpr const char* kMidiPartitionFixedOpening = "6+25=31";
 
 /**
  * Fixed opening for 8-tile Classic under partition: max-partition first guess on the current
@@ -281,6 +293,21 @@ inline int maxi_partition_tie_depth_for_interactive(size_t num_candidates) {
     if (num_candidates <= kThreshold)
         return 1;
     return 0;
+}
+
+/** `./nerdle --strategy partition` uses this tie depth (aligns with `partition_report --tie-depth 6`). */
+inline constexpr int kPartitionInteractiveTieDepth = 6;
+
+/** Hardcoded first guess for partition at tile lengths 5,6,7,8,10; nullptr if `n` is unsupported. */
+inline const char* partition_fixed_opening_tie6(int n) {
+    switch (n) {
+    case 5: return kMicroPartitionFixedOpening;
+    case 6: return kMiniPartitionFixedOpening;
+    case 7: return kMidiPartitionFixedOpening;
+    case 8: return kClassicPartitionFixedOpening;
+    case 10: return kMaxiPartitionFixedOpening;
+    default: return nullptr;
+    }
 }
 
 /**

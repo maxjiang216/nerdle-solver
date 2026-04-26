@@ -38,7 +38,7 @@ static std::string normalize_tiles(const std::string& s) {
 
 int main(int argc, char** argv) {
     const char* path = (argc > 1) ? argv[1] : "data/equations_10.txt";
-    const char* open_str = (argc > 2) ? argv[2] : "58+2-13=47";
+    const char* open_str = (argc > 2) ? argv[2] : "56+4-21=39";
     int N = 10;
     const int P = nerdle::pow3_table(N);
     if (P <= 0) {

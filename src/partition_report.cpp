@@ -8,6 +8,7 @@
 
 #include "nerdle_core.hpp"
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cmath>
@@ -27,6 +28,10 @@
 namespace {
 
 /* Same caps as PartitionGreedyEvaluator::build_feedback_matrix (Report) — one shared n×n table. */
+/* Why build it at all?  `max_tries=6` is the *play depth* — not "6 table lookups per pair". At each
+    tree node, `PartitionGreedyEvaluator` may read many (g,s) pairs when comparing guesses or
+    simulating; O(1) `feedback_code` from a one-time n² precompute is usually a big win for n
+    in the high hundreds / low thousands, until RAM caps force on-the-fly `compute_feedback_packed`. */
 static bool pool_fits_full_feedback_table(int n) {
     if (n <= 0) return false;
     const int cap_n = 20000;
@@ -34,6 +39,22 @@ static bool pool_fits_full_feedback_table(int n) {
     if (n > cap_n) return false;
     const size_t n2 = static_cast<size_t>(n) * static_cast<size_t>(n);
     return n2 * sizeof(uint32_t) <= cap_bytes;
+}
+
+static void build_feedback_table(const std::vector<std::string>& eqs, int N,
+                                 std::vector<uint32_t>& out) {
+    const int n = static_cast<int>(eqs.size());
+    out.resize(static_cast<size_t>(n) * static_cast<size_t>(n));
+#ifdef _OPENMP
+#pragma omp parallel for schedule(dynamic, 16)
+#endif
+    for (int g = 0; g < n; g++) {
+        for (int s = 0; s < n; s++) {
+            out[static_cast<size_t>(g) * static_cast<size_t>(n) + static_cast<size_t>(s)] =
+                nerdle::compute_feedback_packed(
+                    eqs[static_cast<size_t>(g)].c_str(), eqs[static_cast<size_t>(s)].c_str(), N);
+        }
+    }
 }
 
 struct Progress {
@@ -178,6 +199,127 @@ static CountMap partition_histo(
     return out;
 }
 
+static CountMap partition_histo_local_pool(const std::vector<std::string>& eqs, int N, int tries_left,
+                                           int fail_b, int tie_depth, bool use_child_nxn) {
+    std::vector<size_t> all_idx(eqs.size());
+    for (size_t i = 0; i < all_idx.size(); i++)
+        all_idx[i] = i;
+
+    std::vector<uint32_t> child_fb;
+    const std::vector<uint32_t>* pfb = nullptr;
+    if (use_child_nxn && pool_fits_full_feedback_table(static_cast<int>(eqs.size()))) {
+        build_feedback_table(eqs, N, child_fb);
+        pfb = &child_fb;
+    }
+    return partition_histo(eqs, all_idx, N, tries_left, fail_b, -1, false, tie_depth, pfb, nullptr);
+}
+
+static CountMap fixed_opening_histo_with_child_tables(const std::vector<std::string>& all_eqs, int N,
+                                                      int max_tries, int fail_b, int root_force_idx,
+                                                      int tie_depth, bool use_child_nxn, bool show_bucket_progress,
+                                                      std::string* out_root_first_guess) {
+    if (g_progress)
+        g_progress->on_enter();
+
+    const char* g = all_eqs[static_cast<size_t>(root_force_idx)].c_str();
+    if (out_root_first_guess)
+        *out_root_first_guess = all_eqs[static_cast<size_t>(root_force_idx)];
+
+    const uint32_t all_green = nerdle::all_green_packed(N);
+    std::cerr << "Root opening feedback scan: " << all_eqs.size() << " rows…\n" << std::flush;
+    const auto t_root_scan0 = std::chrono::steady_clock::now();
+    std::unordered_map<uint32_t, std::vector<size_t>> by_fb;
+    by_fb.reserve(all_eqs.size() * 2);
+    for (size_t i = 0; i < all_eqs.size(); i++) {
+        uint32_t f = nerdle::compute_feedback_packed(g, all_eqs[i].c_str(), N);
+        by_fb[f].push_back(i);
+    }
+    {
+        const double root_scan_s =
+            std::chrono::duration<double>(std::chrono::steady_clock::now() - t_root_scan0).count();
+        std::cerr << "  Root feedback scan done: " << root_scan_s << " s, " << by_fb.size()
+                  << " non-empty root-feedback buckets\n"
+                  << std::flush;
+    }
+
+    std::vector<std::pair<uint32_t, std::vector<size_t>>> groups;
+    groups.reserve(by_fb.size());
+    for (auto& kv : by_fb)
+        groups.push_back({kv.first, std::move(kv.second)});
+
+    size_t largest = 0;
+    uint64_t sum_sq = 0;
+    for (const auto& kv : groups) {
+        const size_t n = kv.second.size();
+        if (kv.first != all_green) {
+            largest = std::max(largest, n);
+            sum_sq += static_cast<uint64_t>(n) * static_cast<uint64_t>(n);
+        }
+    }
+    std::cerr << "Fixed opening creates " << groups.size()
+              << " non-empty feedback buckets; largest non-green bucket=" << largest
+              << ", sum(non-green n^2)=" << sum_sq << ".\n"
+              << (use_child_nxn
+                     ? "Exact aggregate: per-bucket subpool + build child n×n when size/cap allow.\n"
+                     : "Exact aggregate: per-bucket subpool, child n×n **disabled** (--no-child-tables); "
+                       "slower, less RAM per bucket.\n")
+              << std::flush;
+
+    const int ngroup = static_cast<int>(groups.size());
+    std::vector<CountMap> per(static_cast<size_t>(ngroup));
+    std::atomic<int> completed{0};
+    const std::chrono::steady_clock::time_point t_bucket0 = std::chrono::steady_clock::now();
+#if defined(_OPENMP)
+    const bool par = (ngroup > 1) && (omp_get_level() == 0);
+#pragma omp parallel for schedule(dynamic) if (par)
+#endif
+    for (int i = 0; i < ngroup; i++) {
+        const uint32_t f = groups[static_cast<size_t>(i)].first;
+        const std::vector<size_t>& G = groups[static_cast<size_t>(i)].second;
+        if (f == all_green) {
+            CountMap h(static_cast<size_t>(fail_b) + 1, 0);
+            h[1] = G.size();
+            per[static_cast<size_t>(i)] = std::move(h);
+        } else {
+            std::vector<std::string> child_eqs;
+            child_eqs.reserve(G.size());
+            for (size_t idx : G)
+                child_eqs.push_back(all_eqs[idx]);
+            per[static_cast<size_t>(i)] =
+                partition_histo_local_pool(child_eqs, N, max_tries - 1, fail_b, tie_depth, use_child_nxn);
+        }
+
+        if (show_bucket_progress) {
+            const int d = completed.fetch_add(1, std::memory_order_relaxed) + 1;
+            const int step = std::max(1, ngroup / 200);
+            if (d == 1 || d == ngroup || (d % step == 0)) {
+                const double el =
+                    std::chrono::duration<double>(std::chrono::steady_clock::now() - t_bucket0).count();
+                const double rate = (el > 0.0) ? (static_cast<double>(d) / el) : 0.0;
+                const double eta = (rate > 0.0) ? (static_cast<double>(ngroup - d) / rate) : 0.0;
+#if defined(_OPENMP)
+#pragma omp critical(fixed_opening_progress)
+#endif
+                {
+                    std::cerr << "  [progress] fixed-opening buckets: " << d << "/" << ngroup
+                              << "  elapsed_s=" << std::setprecision(4) << el << "  rate_buckets/s=" << rate
+                              << "  eta_s(rough)=" << std::setprecision(3) << eta << "\n"
+                              << std::flush;
+                }
+            }
+        }
+    }
+
+    CountMap out(static_cast<size_t>(fail_b) + 1, 0);
+    for (int i = 0; i < static_cast<int>(groups.size()); i++) {
+        if (groups[static_cast<size_t>(i)].first == all_green)
+            add_histo_shift(out, per[static_cast<size_t>(i)], 0, fail_b);
+        else
+            add_histo_shift(out, per[static_cast<size_t>(i)], 1, fail_b);
+    }
+    return out;
+}
+
 static void print_root_model(const nerdle::PartitionSolveDist& val, const std::vector<std::string>& eqs,
                             int max_tries) {
     double solved_p = 0.0;
@@ -215,6 +357,7 @@ int main(int argc, char** argv) {
     size_t max_pool = 0;
     bool show_progress = false;
     bool do_exact_aggregate = true;
+    bool use_child_nxn = true;
 
     for (int i = 1; i < argc; i++) {
         std::string a = argv[i];
@@ -232,6 +375,8 @@ int main(int argc, char** argv) {
             show_progress = true;
         } else if (a == "--no-exact-aggregate" || a == "--model-only") {
             do_exact_aggregate = false;
+        } else if (a == "--no-child-tables") {
+            use_child_nxn = false;
         } else if (a[0] == '-') {
             std::cerr
                 << "Usage: " << (argc ? argv[0] : "partition_report")
@@ -243,6 +388,7 @@ int main(int argc, char** argv) {
                    "normalize)\n"
                 << "  [--progress|-v]  (with exact aggregate: subproblem counter on stderr)\n"
                 << "  [--no-exact-aggregate]  (root EV/distribution only; no exact histogram)\n"
+                << "  [--no-child-tables]  (fixed opening + large pool: skip per-bucket n×n; less RAM, slower)\n"
                 << "  Maxi: UTF-8 ²/³ normalized in the pool the same as other tools.\n";
             return 1;
         } else {
@@ -313,17 +459,7 @@ int main(int argc, char** argv) {
                   << " feedback table (PartitionGreedyEvaluator + exact aggregate)…\n"
                   << std::flush;
         const auto t_fb0 = std::chrono::steady_clock::now();
-        full_fb.resize(static_cast<size_t>(npool) * static_cast<size_t>(npool));
-#ifdef _OPENMP
-#pragma omp parallel for schedule(dynamic, 16)
-#endif
-        for (int g = 0; g < npool; g++) {
-            for (int s = 0; s < npool; s++) {
-                full_fb[static_cast<size_t>(g) * static_cast<size_t>(npool) + static_cast<size_t>(s)] =
-                    nerdle::compute_feedback_packed(
-                        eqs[static_cast<size_t>(g)].c_str(), eqs[static_cast<size_t>(s)].c_str(), N);
-            }
-        }
+        build_feedback_table(eqs, N, full_fb);
         std::cerr << "  Feedback table wall time: "
                   << std::chrono::duration<double>(std::chrono::steady_clock::now() - t_fb0).count()
                   << " s\n" << std::flush;
@@ -334,30 +470,43 @@ int main(int argc, char** argv) {
                   << std::flush;
     }
 
-    nerdle::PartitionGreedyEvaluator ev(
-        eqs, N, max_tries, tie_depth, nerdle::PartitionFbBudget::Report, pfb);
+    const bool use_child_tables_for_opening = (root_force_idx >= 0 && pfb == nullptr);
     const auto t_ev0 = std::chrono::steady_clock::now();
-    ev.build_feedback_matrix();
-    const auto t_ev1 = std::chrono::steady_clock::now();
+    nerdle::PartitionSolveDist val{};
+    int g = root_force_idx;
+    size_t root_memo_states = 0;
+    std::chrono::steady_clock::time_point t_ev1 = t_ev0;
+    std::chrono::steady_clock::time_point t_ev2 = t_ev0;
+    if (!use_child_tables_for_opening) {
+        nerdle::PartitionGreedyEvaluator ev(
+            eqs, N, max_tries, tie_depth, nerdle::PartitionFbBudget::Report, pfb);
+        ev.build_feedback_matrix();
+        t_ev1 = std::chrono::steady_clock::now();
+        if (root_force_idx < 0) {
+            g = ev.best_guess_index(all_idx, max_tries, &val);
+        } else {
+            val = ev.distribution_with_fixed_first_guess(root_force_idx);
+        }
+        t_ev2 = std::chrono::steady_clock::now();
+        root_memo_states = ev.memo_size();
+    }
     std::cout.setf(std::ios::unitbuf);
     std::cout << "Pool: " << path << "  n=" << eqs.size() << "  N=" << N << "  max_tries=" << max_tries
               << "\n";
     std::cout << "Tie depth: " << tie_depth
               << "  (0 = max distinct feedbacks only; 1+ adds recursive distribution tie-break)\n";
-    std::cout << "Feedback matrix: " << std::chrono::duration<double>(t_ev1 - t_ev0).count() << " s"
-              << (ev.has_full_feedback_matrix() ? " (full n×n)\n" : " (on-the-fly; no full table)\n");
-
-    nerdle::PartitionSolveDist val{};
-    int g;
-    if (root_force_idx < 0) {
-        g = ev.best_guess_index(all_idx, max_tries, &val);
+    if (use_child_tables_for_opening) {
+        std::cout << "Feedback matrix: skipped root n×n (fixed opening on large pool; per-bucket child tables "
+                  << (use_child_nxn ? "on when they fit" : "disabled (--no-child-tables)")
+                  << ")\n";
+        std::cout << "Policy eval (root model): skipped; exact aggregate below computes the fixed-opening "
+                     "distribution.\n";
     } else {
-        g = root_force_idx;
-        val = ev.distribution_with_fixed_first_guess(root_force_idx);
+        std::cout << "Feedback matrix: " << std::chrono::duration<double>(t_ev1 - t_ev0).count() << " s"
+                  << (pfb ? " (full n×n)\n" : " (on-the-fly; no full table)\n");
+        std::cout << "Policy eval (root): " << std::chrono::duration<double>(t_ev2 - t_ev1).count() << " s  "
+                  << "memo_states=" << root_memo_states << "\n";
     }
-    const auto t_ev2 = std::chrono::steady_clock::now();
-    std::cout << "Policy eval (root): " << std::chrono::duration<double>(t_ev2 - t_ev1).count() << " s  "
-              << "memo_states=" << ev.memo_size() << "\n";
 
     if (root_force_idx < 0)
         std::cout << "First guess (from policy, tie_depth=" << tie_depth << "): " << eqs[static_cast<size_t>(g)]
@@ -365,9 +514,10 @@ int main(int argc, char** argv) {
     else
         std::cout << "First guess (fixed, --opening): " << eqs[static_cast<size_t>(g)] << "\n";
 
-    if (root_force_idx >= 0)
+    if (root_force_idx >= 0 && !use_child_tables_for_opening)
         std::cout << "EV / distribution (fixed root; same tie rules on later moves as --tie-depth):\n";
-    print_root_model(val, eqs, max_tries);
+    if (!use_child_tables_for_opening)
+        print_root_model(val, eqs, max_tries);
 
     if (!do_exact_aggregate) {
         return 0;
@@ -380,8 +530,15 @@ int main(int argc, char** argv) {
     }
     const auto t_agg0 = std::chrono::steady_clock::now();
     std::string exact_first;
-    CountMap h = partition_histo(
-        eqs, all_idx, N, max_tries, fail_b, root_force_idx, true, tie_depth, pfb, &exact_first);
+    CountMap h;
+    if (use_child_tables_for_opening) {
+        const bool show_bucket_progress = true;
+        h = fixed_opening_histo_with_child_tables(eqs, N, max_tries, fail_b, root_force_idx, tie_depth,
+                                                  use_child_nxn, show_bucket_progress, &exact_first);
+    } else {
+        h = partition_histo(
+            eqs, all_idx, N, max_tries, fail_b, root_force_idx, true, tie_depth, pfb, &exact_first);
+    }
     g_progress = nullptr;
     const double agg_s = std::chrono::duration<double>(std::chrono::steady_clock::now() - t_agg0).count();
 

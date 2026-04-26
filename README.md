@@ -8,7 +8,7 @@ Entropy-based solver for [Nerdle](https://www.nerdlegame.com/), [Binerdle](https
 
 ```
 nerdle_solver/
-├── src/                  # C++ and Python source
+├── src/                  # C++ source
 │   └── nerdle_core.hpp   # Shared plain-Nerdle: packed feedback, entropy, v1/v2 selectors
 ├── web/                  # Browser UI (static) + stdlib Python server
 ├── data/                 # Equation files (generated)
@@ -77,6 +77,7 @@ python3 web/server.py
 | Nerdle benchmark | `./bench_nerdle data/equations_N.txt` |
 | Exact min E[guesses] (uniform prior) | `./optimal_expected data/equations_5.txt` (add `--no-simulate` to skip guess-count distribution) |
 | Trace optimal vs entropy+v2 for one target | `./trace_target data/equations_5.txt '9*1=9'` |
+| Partition policy (EV + exact guess distribution) | `./partition_report --pool data/equations_8.txt --tie-depth 6` (add `--no-exact-aggregate` to skip the slow full-pool walk) |
 | Interactive Nerdle | `./nerdle --len 5\|6\|7\|8\|10` |
 | Micro (5-tile) interactive | `./nerdle_micro` or `./nerdle --len 5` — strategy notes: [docs/MICRO_STRATEGY.md](docs/MICRO_STRATEGY.md) |
 | Binerdle optimal 1st | `./solve_binerdle data/equations_6.txt` |
@@ -100,11 +101,6 @@ python3 web/server.py
 ./generate --len 6
 ./generate --len 7
 ./generate --len 8
-```
-
-**Python fallback:**
-```bash
-python src/generate.py --len 5
 ```
 
 **Micro Bellman policy** (`nerdle_micro`, `nerdle --len 5`, `bench_nerdle`): after generating `data/equations_5.txt`, build the lookup table used for exact min-expected-guess play:
@@ -244,7 +240,7 @@ Simulates Quad Nerdle over **sampled distinct** quadruples (all 4 equations diff
 ## Dependencies
 
 - **C++ compiler with OpenMP** — e.g. `g++` with `-fopenmp`
-- **Python 3** (optional) — for `generate.py` fallback only
+- **Python 3** (optional) — for `web/server.py` only
 
 ---
 
@@ -267,7 +263,7 @@ make clean        # remove binaries
 | 6 (mini) | 4*7=28 | 5.82 bits |
 | 7 (midi) | 4+27=31 | ~8.26 bits |
 | 8 (classic) | 48-32=16 | 9.78 bits |
-| 10 (maxi) | 76+1-23=54 | 12.82 bits |
+| 10 (maxi) | 56+4-21=39 | 1-ply entropy: run `./solve data/equations_10.txt` (bits depend on the generated pool) |
 
 **Binerdle (pair space, distinct equations):**
 
@@ -286,7 +282,7 @@ make clean        # remove binaries
 
 Run `./solve_quadnerdle data/equations_8.txt` to recompute. **All 4 equations are always distinct** (space = P(n,4) = n×(n-1)×(n-2)×(n-3), not n⁴). Uses **adaptive strategy** with stratified sampling and a 200k-quad tiebreaker when the top 2 are within 0.02 bits. Use `--no-stratify` for plain random sampling.
 
-**Benchmark stats (lengths 5–10):** `bench_nerdle` uses **precomputed Bellman** for Micro (len 5) when `data/optimal_policy_5.bin` is present; other lengths use **v2** (full equation pool + 2-ply; see `src/nerdle_core.hpp`).
+**Benchmark stats (lengths 5–10, entropy v2 / Bellman):** `bench_nerdle` uses **precomputed Bellman** for Micro (len 5) when `data/optimal_policy_5.bin` is present; other lengths use **v2** (full equation pool + 2-ply; see `src/nerdle_core.hpp`).
 
 | Length | EV guesses | 2 guesses | 3 guesses | 4 guesses | 5 guesses |
 |--------|------------|-----------|-----------|-----------|-----------|
@@ -297,6 +293,40 @@ Run `./solve_quadnerdle data/equations_8.txt` to recompute. **All 4 equations ar
 | 10 (maxi) | ~3.43 | — | — | — | — |
 
 *Rows 5–8: full equation lists. Maxi: 500-equation random sample (`--selector v2`; sampling uses `--sample` with fixed shuffle seed 42). A 5k-sample v1 run on Maxi was ~3.65 EV; v2 is slower on Maxi—use `--sample`.*
+
+**Partition policy** (greedy max distinct feedbacks; with `tie_depth` ≥ 1, refine ties by recursive “solve in 1, 2, …” comparison — the same engine as `./partition_report`). The table is the **exact aggregate** from `./partition_report --pool data/equations_N.txt --tie-depth 6` (full pools; root model and exact sections match). `tie_depth=6` is high enough in practice for strong tie resolution on these pools. The **first guess** column is the policy pick at the root (not necessarily the entropy-optimal row in the `solve` table above).
+
+| Length | First guess (partition) | Mean guesses | 1 | 2 | 3 | 4 | 5 | 6 | fail in 6 |
+|--------|------------------------|-------------|---|---|---|---|---|---|---|
+| 5 (micro) | 3+2=5 | 2.961 | 1 | 31 | 74 | 15 | 5 | 1 | 0 |
+| 6 (mini) | 4*7=28 | 2.641 | 1 | 74 | 129 | 2 | 0 | 0 | 0 |
+| 7 (midi) | 6+25=31 | 3.138 | 1 | 611 | 4756 | 1107 | 140 | 38 | 8 |
+| 8 (classic) | 52-34=18 | 3.048 | 1 | 1702 | 13544 | 2410 | 60 | 6 | 0 |
+| 10 (maxi) | 56+4-21=39† | 3.447 | 1 | 25028 | 1160996 | 870997 | 42190 | 2747 | 416 |
+
+*Columns 1–6: number of equations solved in exactly that many guesses; **fail in 6**: not solved within six tries (bucket 7 in tool output).*
+
+*†Maxi: exact aggregate for the **~2.1M** pool is computed with a **fixed root opening** (same first guess as the partition policy, `--opening`); the tool skips building a full root n×n feedback matrix, buckets secrets by the opening’s feedback, then runs per-bucket subproblems. Progress on stderr estimates wall time. Example (representative; pool size **2102375**):*
+
+```text
+  [progress] fixed-opening buckets: 24750/25029  elapsed_s=33.89  rate_buckets/s=730.2  eta_s(rough)=0.382
+  [progress] fixed-opening buckets: 24875/25029  elapsed_s=34.01  rate_buckets/s=731.5  eta_s(rough)=0.211
+  [progress] fixed-opening buckets: 25000/25029  elapsed_s=34.17  rate_buckets/s=731.6  eta_s(rough)=0.0396
+  [progress] fixed-opening buckets: 25029/25029  elapsed_s=34.32  rate_buckets/s=729.3  eta_s(rough)=0
+
+--- Exact aggregate over all 2102375 secrets (same policy; no sampling) ---
+First guess in walk: 56+4-21=39  (root from --opening)
+Mean total guesses: 3.447233248
+Exact distribution: 1:1 2:25028 3:1160996 4:870997 5:42190 6:2747 7:416
+  (bucket 7 = not solved in 6): 416
+Exact-aggregate wall time: 34.57156782 s
+```
+
+```bash
+./partition_report --pool data/equations_10.txt --tie-depth 6 --opening '56+4-21=39'
+```
+
+*Use `./bench_partition_aggregate` for the same binary and flags as `partition_report` (e.g. `--progress` for long runs). For very large pools, `--no-exact-aggregate` prints only the root model (EV, rounded distribution) without walking the full tree. If RAM is tight on Maxi, `--no-child-tables` skips per-bucket n×n feedback tables (slower, less memory).*
 
 ---
 
