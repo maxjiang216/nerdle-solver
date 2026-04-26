@@ -50,8 +50,11 @@
   }
 
   function evHint() {
-    if (kind !== "classic") {
-      return "Binerdle / Quad: both toggles call the same joint entropy engine for now (second strategy coming later).";
+    if (kind === "binerdle") {
+      return "Binerdle: EV uses joint entropy v2; Partition uses the candidate-only two-board partition selector.";
+    }
+    if (kind === "quad") {
+      return "Quad: EV uses joint entropy v2. Partition scores guesses in the union of remaining candidates to maximize the sum of per-board feedback classes; with two boards left it matches Binerdle partition; with one, single-board partition. Same first-guess policy as one-board Nerdle (entropy fixed; partition = fixed or pool policy when all four pools match).";
     }
     if (n === 5) return "EV = Bellman (min expected guesses) when optimal_policy_5.bin is present; otherwise partition.";
     if (n === 6) return "EV = optimal mini policy (requires optimal_policy_6.bin).";

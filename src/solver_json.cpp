@@ -17,8 +17,10 @@
  */
 
 #include "bench_solve.hpp"
+#include "binerdle_partition.hpp"
 #include "micro_policy.hpp"
 #include "nerdle_core.hpp"
+#include "quad_partition.hpp"
 
 #include <algorithm>
 #include <cctype>
@@ -441,7 +443,12 @@ static void filter_board(const std::vector<std::string>& all_eqs, const std::vec
 
 static std::string best_guess_pairs_api(const std::vector<std::string>& all_eqs,
                                         const std::vector<size_t>& c1, const std::vector<size_t>& c2, int N,
-                                        bool solved1, bool solved2) {
+                                        bool solved1, bool solved2, bool use_partition,
+                                        int tries_remaining) {
+    if (use_partition) {
+        return nerdle::best_guess_binerdle_partition(
+            all_eqs, c1, c2, N, std::max(1, tries_remaining), solved1, solved2);
+    }
     if (c1.size() == 1 && c2.size() == 1) {
         if (solved1 && !solved2) return all_eqs[c2[0]];
         if (solved2 && !solved1) return all_eqs[c1[0]];
@@ -464,7 +471,11 @@ static std::string best_guess_pairs_api(const std::vector<std::string>& all_eqs,
 static std::string best_guess_quads_api(const std::vector<std::string>& all_eqs,
                                         const std::vector<size_t>& c1, const std::vector<size_t>& c2,
                                         const std::vector<size_t>& c3, const std::vector<size_t>& c4, int N,
-                                        bool solved[4]) {
+                                        bool solved[4], bool use_partition, int tries_remaining) {
+    if (use_partition) {
+        return nerdle::best_guess_quad_partition(all_eqs, c1, c2, c3, c4, N, tries_remaining, solved);
+    }
+
     int num_identified = (c1.size() == 1 ? 1 : 0) + (c2.size() == 1 ? 1 : 0) + (c3.size() == 1 ? 1 : 0) +
                          (c4.size() == 1 ? 1 : 0);
 
@@ -632,8 +643,24 @@ int main() {
                 detail::fail_json("invalid strategy for this mode");
             return 0;
         }
+    } else if (req.kind == "binerdle") {
+        const bool want_part = (req.strategy_ui == "partition");
+        const bool want_ev = (req.strategy_ui == "ev" || req.strategy_ui == "entropy" ||
+                              req.strategy_ui == "optimal");
+        if (!want_part && !want_ev) {
+            detail::fail_json("invalid strategy for binerdle");
+            return 0;
+        }
+        strat_resolved = want_part ? "binerdle_partition" : "joint_entropy_v2";
     } else {
-        strat_resolved = "joint_entropy_v2";
+        const bool want_part = (req.strategy_ui == "partition");
+        const bool want_ev =
+            (req.strategy_ui == "ev" || req.strategy_ui == "entropy" || req.strategy_ui == "optimal");
+        if (!want_part && !want_ev) {
+            detail::fail_json("invalid strategy for quad");
+            return 0;
+        }
+        strat_resolved = want_part ? "quad_partition" : "joint_entropy_v2";
     }
 
     std::mt19937 rng(std::random_device{}());
@@ -761,7 +788,11 @@ int main() {
             }
         }
 
-        std::string guess = best_guess_pairs_api(equations, c1, c2, N, solved1, solved2);
+        const int turn = static_cast<int>(req.history.size());
+        const int tries_left = detail::MAX_TRIES_BINERDLE - turn;
+        const bool use_partition = (strat_resolved == "binerdle_partition");
+        std::string guess = best_guess_pairs_api(equations, c1, c2, N, solved1, solved2,
+                                                 use_partition, tries_left);
         if (guess.empty()) {
             if (!solved1 && c1.size() == 1) guess = equations[c1[0]];
             else if (!solved2 && c2.size() == 1) guess = equations[c2[0]];
@@ -827,9 +858,18 @@ int main() {
         }
     }
 
-    std::string guess = best_guess_quads_api(equations, c1, c2, c3, c4, N, solved);
-    if (guess.empty() && req.history.empty())
-        guess = "43-27=16";
+    const int turn = static_cast<int>(req.history.size());
+    const int tries_left = detail::MAX_TRIES_QUAD - turn;
+    const bool use_partition = (strat_resolved == "quad_partition");
+    std::string guess = best_guess_quads_api(equations, c1, c2, c3, c4, N, solved, use_partition,
+                                             tries_left);
+    if (guess.empty() && req.history.empty()) {
+        if (use_partition) {
+            guess = nerdle::quad_full_pool_partition_opening(equations, N, detail::MAX_TRIES_QUAD,
+                                                             nerdle::kPartitionInteractiveTieDepth);
+        } else
+            guess = detail::FIRST_GUESS.at(N);
+    }
 
     uint64_t prod = (uint64_t)c1.size() * (uint64_t)c2.size() * (uint64_t)c3.size() * (uint64_t)c4.size();
     std::cout << "{\"ok\":true,\"remaining\":{\"boards\":[" << c1.size() << "," << c2.size() << ","

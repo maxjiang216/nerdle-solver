@@ -64,7 +64,7 @@ python3 web/server.py
 
 - **Environment:** `NERDLE_DATA_DIR` defaults to the repository root (the server sets this when unset). Equation files are read from `$NERDLE_DATA_DIR/data/equations_N.txt`. Override `SOLVER_JSON` if the binary is not at `./solver_json`. Default listen port is **8765**; if it is already in use, the server tries the next ports up to **8828** and prints which one it chose. Set `STRICT_PORT=1` to require an exact `PORT` or exit.
 - **API:** `POST /api/step` with JSON body `{ "kind": "classic"|"binerdle"|"quad", "n": ..., "strategy": "ev"|"partition", "history": [...] }`. Responses include `suggestion`, `remaining`, and `strategy_resolved`.
-- **Strategies (classic):** `partition` uses the partition policy. `ev` maps to Bellman (Micro, with `data/optimal_policy_5.bin`), optimal mini policy (Mini, requires `data/optimal_policy_6.bin`), or entropy v2 (Midi / Normal / Maxi — heuristic, not full Bellman on those pools). **Binerdle / Quad:** both toggle values currently resolve to the same joint entropy multi-board selector (`strategy_resolved`: `joint_entropy_v2`); a second joint strategy can be wired in later.
+- **Strategies:** for Classic, `partition` uses the partition policy, while `ev` maps to Bellman (Micro, with `data/optimal_policy_5.bin`), optimal mini policy (Mini, requires `data/optimal_policy_6.bin`), or entropy v2 (Midi / Normal / Maxi — heuristic, not full Bellman on those pools). For Binerdle, `partition` uses the candidate-only two-board partition selector and `ev` uses joint entropy v2. For Quad, `ev` is joint entropy v2; `partition` scores each candidate in the union of the unsolved boards’ remaining equations by the **total** number of distinct per-board feedback classes (same counting idea as Binerdle, summed across boards), with known answer if a board is down to one candidate, the same first-guess rule as one-board Nerdle when all four candidate sets match the full pool, and fallback to the Binerdle selector when only two unsolved boards remain, then single-board partition when one remains.
 
 ---
 
@@ -169,9 +169,10 @@ Guess 2 Nerdle equations in 7 tries. **One guess per turn** applies to both; you
 ```bash
 ./binerdle --len 6     # mini (6-tile equations)
 ./binerdle --len 8     # normal (8-tile equations)
+./binerdle --len 8 --strategy partition
 ```
 
-Enter feedback for each equation (G/P/B or `y` if correct). You can override the suggested guess by typing your own (same length); press Enter to use the suggestion.
+Enter feedback for each equation (G/P/B or `y` if correct). You can override the suggested guess by typing your own (same length); press Enter to use the suggestion. `--strategy partition` chooses from the union of the two remaining candidate sets and maximizes the chance of solving one board now and the other on the next guess; ties use canonical equation order.
 
 ---
 
@@ -204,11 +205,29 @@ Simulates the solver against all equations and reports mean/max guesses and dist
 ### 7. Binerdle benchmark (`bench_binerdle`)
 
 ```bash
-./bench_binerdle data/equations_6.txt   # mini
-./bench_binerdle data/equations_8.txt   # normal
+./bench_binerdle data/equations_6.txt   # mini, exhaustive n×n pairs
+./bench_binerdle data/equations_8.txt   # normal, exhaustive n×n pairs
+./bench_binerdle --strategy partition data/equations_6.txt
+./bench_binerdle --strategy partition --sample 100000 --seed 42 data/equations_6.txt   # Monte Carlo
 ```
 
-Simulates Binerdle with one shared guess per turn. Reports mean guesses and distribution. Turns = when both equations are identified (effectively max of the two "virtual" identification times).
+Simulates Binerdle with one shared guess per turn. Reports mean guesses and distribution. Turns = when both candidate sets are reduced to one equation each (same stopping rule as the benchmark loop). By default it runs **all** ordered pairs (i,j), including i=j; use **`--sample K`** for **K** Monte Carlo samples (uniform random i and j in `[0,n)` with replacement) and **`--seed S`** for a fixed RNG seed (default 42 when seed unset and sample mode is used).
+
+**Partition strategy — Monte Carlo guess-count distribution** (representative; regenerate after changing `data/equations_*.txt`):
+
+| Pool | Samples | Seed | Mean turns | Distribution (turns: count, %) | Fail 8+ |
+|------|--------|------|------------|--------------------------------|---------|
+| Mini 6 `data/equations_6.txt` (206 eq) | 100000 | 42 | 2.832 | 1:1509 (1.5%) · 2:38860 (38.9%) · 3:34910 (34.9%) · 4:24331 (24.3%) · 5:390 (0.4%) | 0 |
+| Normal 8 `data/equations_8.txt` (~17.7k eq) | 15000 | 42 | 3.544 | 1:3 (0.0%) · 2:2285 (15.2%) · 3:4242 (28.3%) · 4:6676 (44.5%) · 5:1643 (11.0%) · 6:121 (0.8%) · 7:28 (0.2%) | 2 (0.01%) |
+
+Commands used for the table:
+
+```text
+./bench_binerdle --strategy partition --sample 100000 --seed 42 data/equations_6.txt
+./bench_binerdle --strategy partition --sample 15000  --seed 42 data/equations_8.txt
+```
+
+The Normal 8 run uses fewer samples because each pair is more expensive; the two failures in 15k samples are rare events (Monte Carlo noise around a small true failure rate).
 
 ---
 
