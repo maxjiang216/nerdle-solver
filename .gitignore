@@ -32,7 +32,12 @@ optimal_expected
 optimal_subgame
 partition_report
 solver_json
+browser_partition_artifacts
 test_fb
+
+web/node_modules/
+web/partition_node.cjs
+web/micro_node.cjs
 trace_target
 
 # Generated data (run ./generate or ./generate_maxi to create)

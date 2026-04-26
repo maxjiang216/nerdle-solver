@@ -5,11 +5,12 @@
   const kind = params.get("kind") || "classic";
   const n = parseInt(params.get("n") || "8", 10);
   const numBoards = kind === "quad" ? 4 : kind === "binerdle" ? 2 : 1;
+  const isMicroClassic = kind === "classic" && n === 5;
 
   const els = {
     title: document.getElementById("engine-title"),
     strategyToggle: document.getElementById("strategy-toggle"),
-    btnEv: document.getElementById("btn-ev"),
+    btnBellman: document.getElementById("btn-bellman"),
     btnPartition: document.getElementById("btn-partition"),
     strategyHint: document.getElementById("strategy-hint"),
     guessHint: document.getElementById("guess-hint"),
@@ -26,8 +27,8 @@
     history: document.getElementById("history"),
   };
 
-  /** @type {'ev'|'partition'} */
-  let strategy = "ev";
+  /** @type {'bellman'|'partition'} */
+  let strategy = isMicroClassic ? "bellman" : "partition";
   /** @type {string[]} */
   let guessCells = Array(n).fill("");
   let cursor = 0;
@@ -49,17 +50,23 @@
     return "Quad Nerdle (4×8)";
   }
 
-  function evHint() {
+  function strategyHintText() {
+    if (isMicroClassic) {
+      return (
+        "Bellman (optimal): min expected guesses using data/optimal_policy_5.bin (copy via make micro_policy_web). " +
+        "Partition: same browser engine as other lengths."
+      );
+    }
     if (kind === "binerdle") {
-      return "Binerdle: EV uses joint entropy v2; Partition uses the candidate-only two-board partition selector.";
+      return "Partition strategy in the browser (static data under web/data/partition/). Run make browser_partition_data after generating pools.";
     }
     if (kind === "quad") {
-      return "Quad: EV uses joint entropy v2. Partition scores guesses in the union of remaining candidates to maximize the sum of per-board feedback classes; with two boards left it matches Binerdle partition; with one, single-board partition. Same first-guess policy as one-board Nerdle (entropy fixed; partition = fixed or pool policy when all four pools match).";
+      return "Partition strategy in the browser. Run make browser_partition_data after generating pools.";
     }
-    if (n === 5) return "EV = Bellman (min expected guesses) when optimal_policy_5.bin is present; otherwise partition.";
-    if (n === 6) return "EV = optimal mini policy (requires optimal_policy_6.bin).";
-    if (n === 7 || n === 8 || n === 10) return "EV = entropy selector v2 (heuristic; not full Bellman on this pool).";
-    return "";
+    if (n === 10) {
+      return "Partition in the browser. Maxi expects the recommended first guess unless you use a full pool artifact.";
+    }
+    return "Partition strategy in the browser (make browser_partition_data).";
   }
 
   function guessHintText() {
@@ -71,8 +78,9 @@
   }
 
   function setStrategy(s) {
+    if (!isMicroClassic) return;
     strategy = s;
-    els.btnEv.classList.toggle("active", s === "ev");
+    els.btnBellman.classList.toggle("active", s === "bellman");
     els.btnPartition.classList.toggle("active", s === "partition");
     refreshEngine();
   }
@@ -254,51 +262,68 @@
     });
   }
 
+  function applySolverResponse(data) {
+    if (!data.ok) {
+      els.suggestion.textContent = "—";
+      els.remaining.textContent = "—";
+      showError(data.error || "request failed");
+      return;
+    }
+    if (data.solved) {
+      els.suggestion.textContent = data.suggestion || guessCells.join("");
+      els.remaining.textContent = "Solved";
+      els.remainingNote.textContent = "";
+      return;
+    }
+    els.suggestion.textContent = data.suggestion || "—";
+    if (typeof data.remaining === "number") {
+      els.remaining.textContent = data.remaining.toLocaleString();
+      els.remainingNote.textContent = "Valid equations in pool consistent with your clues.";
+    } else if (data.remaining && Array.isArray(data.remaining.boards)) {
+      const br = data.remaining.boards;
+      const prod = data.remaining.product != null ? data.remaining.product : data.remaining_product;
+      els.remaining.textContent = br.map((x) => x.toLocaleString()).join(" · ");
+      els.remainingNote.textContent =
+        "Per-board counts" + (prod != null ? ` (product ${Number(prod).toLocaleString()})` : "") + ".";
+    } else {
+      els.remaining.textContent = "—";
+      els.remainingNote.textContent = "";
+    }
+  }
+
   async function refreshEngine() {
     showError("");
-    const body = {
-      kind,
-      n,
-      strategy,
-      history: historyPayload(),
-    };
-    try {
-      const res = await fetch("/api/step", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-      });
-      const data = await res.json();
-      if (!data.ok) {
-        els.suggestion.textContent = "—";
-        els.remaining.textContent = "—";
-        showError(data.error || "request failed");
-        return;
+    const hist = historyPayload();
+
+    if (isMicroClassic && strategy === "bellman" && typeof window.nerdleMicroBellmanClassic === "function") {
+      try {
+        const data = await window.nerdleMicroBellmanClassic("", hist);
+        if (data.ok) {
+          applySolverResponse(data);
+          return;
+        }
+        showError(data.error || "");
+      } catch (e) {
+        showError(String(e));
       }
-      if (data.solved) {
-        els.suggestion.textContent = data.suggestion || guessCells.join("");
-        els.remaining.textContent = "Solved";
-        els.remainingNote.textContent = "";
-        return;
-      }
-      els.suggestion.textContent = data.suggestion || "—";
-      if (typeof data.remaining === "number") {
-        els.remaining.textContent = data.remaining.toLocaleString();
-        els.remainingNote.textContent = "Valid equations in pool consistent with your clues.";
-      } else if (data.remaining && Array.isArray(data.remaining.boards)) {
-        const br = data.remaining.boards;
-        els.remaining.textContent = br.map((x) => x.toLocaleString()).join(" · ");
-        els.remainingNote.textContent =
-          "Per-board counts" +
-          (data.remaining_product != null ? ` (product ${Number(data.remaining_product).toLocaleString()})` : "") +
-          ".";
-      } else {
-        els.remaining.textContent = "—";
-        els.remainingNote.textContent = "";
-      }
-    } catch (e) {
-      showError(String(e));
+      return;
     }
+
+    if (typeof window.nerdleBrowserPartition === "function") {
+      try {
+        const data = await window.nerdleBrowserPartition("", kind, n, hist);
+        if (data.ok) {
+          applySolverResponse(data);
+          return;
+        }
+        showError(data.error || "");
+      } catch (e) {
+        showError(String(e));
+      }
+      return;
+    }
+
+    showError("Browser engine not loaded (build web bundle: cd web && npm run build).");
   }
 
   function renderHistory() {
@@ -409,12 +434,17 @@
   /* init */
   els.title.textContent = modeTitle();
   document.title = modeTitle() + " — engine";
-  els.strategyHint.textContent = evHint();
+  els.strategyHint.textContent = strategyHintText();
   els.guessHint.textContent = guessHintText();
 
-  els.btnEv.addEventListener("click", () => setStrategy("ev"));
-  els.btnPartition.addEventListener("click", () => setStrategy("partition"));
-  setStrategy("ev");
+  if (!isMicroClassic) {
+    els.strategyToggle.hidden = true;
+  } else {
+    els.btnBellman.addEventListener("click", () => setStrategy("bellman"));
+    els.btnPartition.addEventListener("click", () => setStrategy("partition"));
+    els.btnBellman.classList.toggle("active", strategy === "bellman");
+    els.btnPartition.classList.toggle("active", strategy === "partition");
+  }
 
   els.btnApply.addEventListener("click", () => {
     const s = els.suggestion.textContent.trim();

@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "kind": "classic",
+  "n": 7,
+  "opening": "6+25=31",
+  "poolSize": 6661,
+  "bucketDir": "b",
+  "hasPoolFull": true,
+  "hasOpeningBuckets": true
+}

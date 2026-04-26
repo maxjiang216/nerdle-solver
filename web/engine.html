@@ -20,7 +20,7 @@
         <h3>Solver input</h3>
         <div class="toolbar">
           <div class="strategy-toggle" id="strategy-toggle">
-            <button type="button" data-strat="ev" id="btn-ev">EV / optimal</button>
+            <button type="button" data-strat="bellman" id="btn-bellman">Bellman (optimal)</button>
             <button type="button" data-strat="partition" id="btn-partition">Partition</button>
           </div>
           <button type="button" class="btn btn-ghost" id="btn-reset">Reset</button>
@@ -58,6 +58,7 @@
       </div>
     </div>
   </main>
-  <script src="app.js" defer></script>
+  <script defer src="app.bundle.js"></script>
+  <script defer src="app.js"></script>
 </body>
 </html>

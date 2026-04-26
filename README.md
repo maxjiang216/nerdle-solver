@@ -10,7 +10,7 @@ Entropy-based solver for [Nerdle](https://www.nerdlegame.com/), [Binerdle](https
 nerdle_solver/
 ├── src/                  # C++ source
 │   └── nerdle_core.hpp   # Shared plain-Nerdle: packed feedback, entropy, v1/v2 selectors
-├── web/                  # Browser UI (static) + stdlib Python server
+├── web/                  # Browser UI (static TS bundle + partition JSON + Micro policy)
 ├── data/                 # Equation files (generated)
 ├── docs/                 # Strategy notes (e.g. Micro Bellman write-up)
 ├── Makefile
@@ -53,18 +53,31 @@ make                           # build C++ tools
 
 ## Web UI
 
-Static pages under `web/` talk to a tiny JSON API backed by the `solver_json` binary (same logic as the interactive CLI tools).
+The static pages under `web/` run **in the browser only**: **partition** for all modes except Micro strategy choice; **Micro (5-tile)** adds **Bellman (optimal)** vs **partition** using `web/data/optimal_policy_5.bin`. There is no Python web server or `POST /api/step` in this UI.
 
 ```bash
-make solver_json
-# Generate pools for the modes you need (see above), then:
-python3 web/server.py
-# Open http://127.0.0.1:8765/
+# One-shot: partition JSON + Micro policy copy + esbuild bundle (needs pools in data/)
+make prepare_web_deploy
+# Same script: ./scripts/prepare_web_deploy.sh
+# After TS-only changes: ./scripts/prepare_web_deploy.sh --web-only
+
+# Manual steps (equivalent to full prepare_web_deploy):
+make browser_partition_artifacts
+make browser_partition_data
+cd web && npm install && npm run build
+# Optional: http://127.0.0.1:8123/ — npm run dev
 ```
 
-- **Environment:** `NERDLE_DATA_DIR` defaults to the repository root (the server sets this when unset). Equation files are read from `$NERDLE_DATA_DIR/data/equations_N.txt`. Override `SOLVER_JSON` if the binary is not at `./solver_json`. Default listen port is **8765**; if it is already in use, the server tries the next ports up to **8828** and prints which one it chose. Set `STRICT_PORT=1` to require an exact `PORT` or exit.
-- **API:** `POST /api/step` with JSON body `{ "kind": "classic"|"binerdle"|"quad", "n": ..., "strategy": "ev"|"partition", "history": [...] }`. Responses include `suggestion`, `remaining`, and `strategy_resolved`.
-- **Strategies:** for Classic, `partition` uses the partition policy, while `ev` maps to Bellman (Micro, with `data/optimal_policy_5.bin`), optimal mini policy (Mini, requires `data/optimal_policy_6.bin`), or entropy v2 (Midi / Normal / Maxi — heuristic, not full Bellman on those pools). For Binerdle, `partition` uses the candidate-only two-board partition selector and `ev` uses joint entropy v2. For Quad, `ev` is joint entropy v2; `partition` scores each candidate in the union of the unsolved boards’ remaining equations by the **total** number of distinct per-board feedback classes (same counting idea as Binerdle, summed across boards), with known answer if a board is down to one candidate, the same first-guess rule as one-board Nerdle when all four candidate sets match the full pool, and fallback to the Binerdle selector when only two unsolved boards remain, then single-board partition when one remains.
+- **Artifacts:** `make browser_partition_data` writes `web/data/partition/{classic,binerdle,quad}_nN/` (see [docs/PARTITION_BROWSER_ARTIFACTS.md](docs/PARTITION_BROWSER_ARTIFACTS.md)) and runs `micro_policy_web` to copy `data/optimal_policy_5.bin` → `web/data/optimal_policy_5.bin` (run `make micro_policy` first if missing). Maxi (`n=10`) writes a manifest only, using the known recommended first guess (`56+4-21=39`), so deploy prep does not generate the huge post-opening bucket set.
+- **Regression check:** `npm run validate:partition --prefix web` compares the browser partition engine to `./solver_json` (the binary is only used for that test, not by the UI).
+- **Strategies (web):** Bellman = precomputed Micro policy; partition = browser partition engine for all lengths/modes.
+
+### Deploying to Vercel (GitHub)
+
+1. From a dev machine with the C++ toolchain and pools, run **`make prepare_web_deploy`** (or **`./scripts/prepare_web_deploy.sh`**) so `web/data/partition/`, `web/data/optimal_policy_5.bin`, and `web/app.bundle.js` exist.
+2. **Commit** those generated files under `web/data/` and `web/app.bundle.js` (they are not gitignored; expect on the order of tens of MB for n≤8 partition buckets; Maxi is first-guess-only in the static deploy).
+3. In Vercel: **Import** the GitHub repo → **Root Directory**: `web` → Framework Preset: **Other** → **Build Command**: `npm run build` → **Install Command**: `npm install` (or `npm ci`). **Output** is the `web` folder itself (static `index.html`, `engine.html`, etc.).
+4. Node **18+** on Vercel matches `engines` in `web/package.json`.
 
 ---
 
@@ -86,7 +99,7 @@ python3 web/server.py
 | Quad Nerdle optimal 1st | `./solve_quadnerdle data/equations_8.txt` |
 | Quad Nerdle interactive | `./quadnerdle --len 8` |
 | Quad Nerdle benchmark | `./bench_quadnerdle data/equations_8.txt` |
-| Web solver UI | `make solver_json` then `python3 web/server.py` |
+| Web solver UI | `make prepare_web_deploy` (serve `web/` over HTTP); TS-only: `./scripts/prepare_web_deploy.sh --web-only` |
 
 ---
 
@@ -259,7 +272,7 @@ Simulates Quad Nerdle over **sampled distinct** quadruples (all 4 equations diff
 ## Dependencies
 
 - **C++ compiler with OpenMP** — e.g. `g++` with `-fopenmp`
-- **Python 3** (optional) — for `web/server.py` only
+- **Node.js** (optional) — `cd web && npm install` to build the browser bundle (`esbuild`)
 
 ---
 

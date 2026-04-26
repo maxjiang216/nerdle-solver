@@ -1,0 +1,18 @@
+{
+  "name": "nerdle-web-partition",
+  "private": true,
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "build": "esbuild src/entry.ts --bundle --outfile=app.bundle.js --format=iife --target=es2020",
+    "dev": "esbuild src/entry.ts --bundle --outfile=app.bundle.js --format=iife --target=es2020 --watch --servedir=. --serve=127.0.0.1:8123",
+    "deploy:prep": "bash ../scripts/prepare_web_deploy.sh",
+    "deploy:prep:web": "bash ../scripts/prepare_web_deploy.sh --web-only",
+    "validate:partition": "node scripts/validate_partition_engine.mjs"
+  },
+  "devDependencies": {
+    "esbuild": "^0.24.0",
+    "typescript": "^5.7.0"
+  }
+}

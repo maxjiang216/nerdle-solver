@@ -28,7 +28,7 @@ The same tie-break is applied at **every** DP state when writing `data/optimal_p
 
 ## Artifact: `data/optimal_policy_5.bin`
 
-`./optimal_expected data/equations_5.txt --write-policy data/optimal_policy_5.bin` enumerates all **non-singleton** masks visited by the DP and records the chosen guess index per mask. The interactive tools (`./nerdle_micro`, `./nerdle --len 5`, `solver_json` for classic n=5) **look up** the next guess from this table. If a mask is missing (should not happen for Micro), they fall back to entropy v2.
+`./optimal_expected data/equations_5.txt --write-policy data/optimal_policy_5.bin` enumerates all **non-singleton** masks visited by the DP and records the chosen guess index per mask. The interactive tools (`./nerdle_micro`, `./nerdle --len 5`, `solver_json` for classic n=5, and the **Bellman (optimal)** mode in the static `web/` UI via `web/data/optimal_policy_5.bin`) **look up** the next guess from this table. If a mask is missing (should not happen for Micro), they fall back to entropy v2 (CLI) or partition (web).
 
 Regenerate after changing the equation generator, the Micro pool file, or the Bellman tie-break.
 
