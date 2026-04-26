@@ -311,7 +311,17 @@ main {
 .tile.combined.tile-cursor-active {
   outline: 3px solid var(--green-bright);
   outline-offset: 1px;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.35);
   z-index: 1;
+}
+
+#combined-boards:focus {
+  outline: none;
+}
+
+#combined-boards:focus-visible {
+  box-shadow: 0 0 0 2px var(--green-bright);
+  border-radius: 6px;
 }
 
 .board-block {

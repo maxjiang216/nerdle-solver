@@ -34,6 +34,8 @@
   let cursor = 0;
   /** Which board receives g/p/b when using keyboard (click a tile to focus a board). */
   let activeBoard = 0;
+  /** `"board,col"` of the tile last selected by click; repeat click on that tile cycles color. Cleared when highlight moves by keyboard/typing. */
+  let lastPointerTileKey = null;
   /** @type {('G'|'P'|'B')[][]} */
   let feedback = Array.from({ length: numBoards }, () => Array(n).fill("B"));
   /** @type {object[]} */
@@ -70,10 +72,15 @@
   }
 
   function guessHintText() {
+    const nav =
+      numBoards > 1
+        ? "Arrow keys ← → move the highlighted cell (wraps across boards); ↑ ↓ switch boards at the same column. "
+        : "Arrow keys ← → move the highlighted cell. ";
     return (
-      "Click a tile to focus it and cycle teal → purple → black. Type digits/symbols from the keypad. " +
+      nav +
+      "Click a tile to select it; click again to cycle teal → purple → black. Type digits/symbols from the keypad. " +
       "Slots that must still be green from your past guesses default to teal; others default to black. " +
-      "Keys g, p, b set color and move right."
+      "Keys g, p, b set color and move right. Backspace clears tile color; Delete erases the typed character."
     );
   }
 
@@ -161,7 +168,27 @@
   }
 
   function advanceCursor() {
-    cursor = (cursor + 1) % n;
+    moveHighlight(1);
+  }
+
+  /** Move the feedback highlight: one step along boards×columns (left = −1, right = +1), wrapping the full grid. */
+  function moveHighlight(delta) {
+    lastPointerTileKey = null;
+    if (numBoards === 1) {
+      cursor = (cursor + delta + n) % n;
+      return;
+    }
+    const total = numBoards * n;
+    let linear = activeBoard * n + cursor;
+    linear = (linear + delta + total) % total;
+    activeBoard = Math.floor(linear / n);
+    cursor = linear % n;
+  }
+
+  function moveActiveBoard(delta) {
+    if (numBoards <= 1) return;
+    lastPointerTileKey = null;
+    activeBoard = (activeBoard + delta + numBoards) % numBoards;
   }
 
   function renderCombinedBoards() {
@@ -188,12 +215,22 @@
         span.className = "tile-char";
         span.textContent = guessCells[i] || "·";
         t.appendChild(span);
-        t.title = "Click: cycle teal → purple → black";
+        t.title = "First click selects; later clicks cycle teal → purple → black";
         t.addEventListener("click", (ev) => {
           ev.preventDefault();
+          const tileKey = `${b},${i}`;
           activeBoard = b;
           cursor = i;
-          cycleFeedback(b, i);
+          try {
+            els.combinedBoards.focus({ preventScroll: true });
+          } catch (_) {
+            els.combinedBoards.focus();
+          }
+          if (lastPointerTileKey === tileKey) {
+            cycleFeedback(b, i);
+          } else {
+            lastPointerTileKey = tileKey;
+          }
           renderCombinedBoards();
         });
         row.appendChild(t);
@@ -220,7 +257,7 @@
     bs.type = "button";
     bs.textContent = "\u232b";
     bs.className = "key-wide";
-    bs.addEventListener("click", backspace);
+    bs.addEventListener("click", () => deleteDigit());
     els.keypad.appendChild(bs);
     const clr = document.createElement("button");
     clr.type = "button";
@@ -229,6 +266,7 @@
     clr.addEventListener("click", () => {
       guessCells = Array(n).fill("");
       cursor = 0;
+      lastPointerTileKey = null;
       feedback = Array.from({ length: numBoards }, () => Array(n).fill("B"));
       applyFeedbackDefaults();
       renderCombinedBoards();
@@ -237,6 +275,7 @@
   }
 
   function typeKey(k) {
+    lastPointerTileKey = null;
     if (cursor >= n) cursor = n - 1;
     guessCells[cursor] = k;
     cursor = Math.min(n - 1, cursor + 1);
@@ -244,7 +283,17 @@
     renderCombinedBoards();
   }
 
-  function backspace() {
+  /** Keyboard Backspace: clear feedback color on the highlighted tile (then re-apply history defaults). */
+  function backspaceFeedback() {
+    lastPointerTileKey = null;
+    feedback[activeBoard][cursor] = "B";
+    applyFeedbackDefaults();
+    renderCombinedBoards();
+  }
+
+  /** Keyboard Delete / keypad ⌫: erase guess character at the highlight (or step left if empty). */
+  function deleteDigit() {
+    lastPointerTileKey = null;
     if (guessCells[cursor]) {
       guessCells[cursor] = "";
     } else if (cursor > 0) {
@@ -291,39 +340,40 @@
     }
   }
 
-  async function refreshEngine() {
-    showError("");
-    const hist = historyPayload();
-
+  async function solveHistory(hist) {
     if (isMicroClassic && strategy === "bellman" && typeof window.nerdleMicroBellmanClassic === "function") {
       try {
         const data = await window.nerdleMicroBellmanClassic("", hist);
-        if (data.ok) {
-          applySolverResponse(data);
-          return;
-        }
-        showError(data.error || "");
+        if (data.ok) return data;
+        return data;
       } catch (e) {
-        showError(String(e));
+        return { ok: false, error: String(e) };
       }
-      return;
+    }
+
+    if (isMicroClassic && strategy === "bellman") {
+      return { ok: false, error: "Micro Bellman engine not loaded (build web bundle: cd web && npm run build)." };
     }
 
     if (typeof window.nerdleBrowserPartition === "function") {
       try {
-        const data = await window.nerdleBrowserPartition("", kind, n, hist);
-        if (data.ok) {
-          applySolverResponse(data);
-          return;
-        }
-        showError(data.error || "");
+        return await window.nerdleBrowserPartition("", kind, n, hist);
       } catch (e) {
-        showError(String(e));
+        return { ok: false, error: String(e) };
       }
-      return;
     }
 
-    showError("Browser engine not loaded (build web bundle: cd web && npm run build).");
+    return { ok: false, error: "Browser engine not loaded (build web bundle: cd web && npm run build)." };
+  }
+
+  async function refreshEngine() {
+    showError("");
+    const data = await solveHistory(historyPayload());
+    if (data.ok) {
+      applySolverResponse(data);
+      return;
+    }
+    showError(data.error || "request failed");
   }
 
   function renderHistory() {
@@ -337,7 +387,7 @@
     });
   }
 
-  function submitRow() {
+  async function submitRow() {
     showError("");
     if (guessCells.some((c) => !c)) {
       showError(`Fill all ${n} guess tiles.`);
@@ -348,14 +398,25 @@
       kind === "classic"
         ? { guess: g, feedback: feedback[0].join("") }
         : { guess: g, feedbacks: feedback.map((row) => row.join("")) };
+    const proposedHistory = historyPayload().concat(
+      kind === "classic"
+        ? { guess: entry.guess, feedback: entry.feedback }
+        : { guess: entry.guess, feedback: entry.feedbacks }
+    );
+    const data = await solveHistory(proposedHistory);
+    if (!data.ok) {
+      showError(data.error || "No candidates remain — check guess and feedback.");
+      return;
+    }
     history.push(entry);
     guessCells = Array(n).fill("");
     cursor = 0;
+    lastPointerTileKey = null;
     feedback = Array.from({ length: numBoards }, () => Array(n).fill("B"));
     applyFeedbackDefaults();
     renderCombinedBoards();
     renderHistory();
-    refreshEngine();
+    applySolverResponse(data);
   }
 
   function resetAll() {
@@ -363,6 +424,7 @@
     guessCells = Array(n).fill("");
     cursor = 0;
     activeBoard = 0;
+    lastPointerTileKey = null;
     feedback = Array.from({ length: numBoards }, () => Array(n).fill("B"));
     applyFeedbackDefaults();
     renderCombinedBoards();
@@ -387,19 +449,36 @@
     }
     if (key === "ArrowLeft") {
       ev.preventDefault();
-      cursor = (cursor - 1 + n) % n;
+      moveHighlight(-1);
       renderCombinedBoards();
       return;
     }
     if (key === "ArrowRight") {
       ev.preventDefault();
-      advanceCursor();
+      moveHighlight(1);
+      renderCombinedBoards();
+      return;
+    }
+    if (key === "ArrowUp") {
+      ev.preventDefault();
+      moveActiveBoard(-1);
+      renderCombinedBoards();
+      return;
+    }
+    if (key === "ArrowDown") {
+      ev.preventDefault();
+      moveActiveBoard(1);
       renderCombinedBoards();
       return;
     }
     if (key === "Backspace") {
       ev.preventDefault();
-      backspace();
+      backspaceFeedback();
+      return;
+    }
+    if (key === "Delete") {
+      ev.preventDefault();
+      deleteDigit();
       return;
     }
     const map = {
@@ -432,23 +511,30 @@
   }
 
   /* init */
+  els.combinedBoards.tabIndex = 0;
+  els.combinedBoards.setAttribute("role", "grid");
+  els.combinedBoards.setAttribute("aria-label", "Current guess and per-tile feedback");
+
   els.title.textContent = modeTitle();
   document.title = modeTitle() + " — engine";
   els.strategyHint.textContent = strategyHintText();
   els.guessHint.textContent = guessHintText();
 
-  if (!isMicroClassic) {
-    els.strategyToggle.hidden = true;
-  } else {
+  els.strategyToggle.hidden = !isMicroClassic;
+  els.btnBellman.hidden = !isMicroClassic;
+  if (isMicroClassic) {
     els.btnBellman.addEventListener("click", () => setStrategy("bellman"));
     els.btnPartition.addEventListener("click", () => setStrategy("partition"));
     els.btnBellman.classList.toggle("active", strategy === "bellman");
     els.btnPartition.classList.toggle("active", strategy === "partition");
+  } else {
+    els.btnPartition.classList.add("active");
   }
 
   els.btnApply.addEventListener("click", () => {
     const s = els.suggestion.textContent.trim();
     if (!s || s === "—") return;
+    lastPointerTileKey = null;
     guessCells = splitGuessString(s);
     while (guessCells.length < n) guessCells.push("");
     guessCells = guessCells.slice(0, n);

@@ -2,7 +2,7 @@
 
 Static files under `web/data/partition/` power the browser-only partition solver.
 
-They are **generated** by `make browser_partition_data_web` (CI/Vercel-friendly: uses `data/equations_{5,6,7,8}.txt` and a static Maxi manifest) or `make browser_partition_data` (includes Maxi manifest derived from `data/equations_10.txt` via `--manifest-only`). Generated output is normally **not** committed; run `./scripts/prepare_web_deploy.sh` locally or on the host that builds static assets.
+They are **generated** by `make browser_partition_data_web` (CI/Vercel-friendly: uses tracked `data/equations_{5,6,7,8,10}.txt`). Generated output is normally **not** committed; run `./scripts/prepare_web_deploy.sh` locally or on the host that builds static assets.
 
 ## Layout
 
@@ -32,7 +32,7 @@ web/data/partition/
 }
 ```
 
-- Maxi (`n=10`): `hasPoolFull` is false, `hasOpeningBuckets` is false; the static UI exposes only the recommended first guess (`56+4-21=39`). Post-opening play is not supported without full buckets.
+- Maxi (`n=10`): `hasPoolFull` is false and `hasOpeningBuckets` is true. The static UI requires the recommended first guess (`56+4-21=39`), then loads the matching opening-feedback bucket for post-opening play.
 
 ## Bucket file `b/{code}.json`
 
@@ -43,7 +43,7 @@ JSON array of rows, each row:
 ```
 
 - `id`: 0-based index into `data/equations_{N}.txt` (after maxi normalization in the generator).
-- `rank`: canonical tie-break rank (0 = best); matches `canonical_less` order on the full pool.
+- `rank`: canonical tie-break rank (0 = best); matches `canonical_less` order on the full pool for n≤8. Maxi opening-bucket rows use the equation id here because browser Classic post-opening selection does not need canonical rank.
 - `equation`: display string (UTF-8 `²`/`³` for maxi).
 
 Rows are sorted by `id` ascending.

@@ -38,6 +38,7 @@ export async function fetchBucket(baseUrl: string, kind: string, n: number, feed
   const key = manifestKey(kind, n);
   const url = joinDataPath(baseUrl, `data/partition/${key}/b/${feedbackCode}.json`);
   const res = await fetch(url);
+  if (res.status === 404) return [];
   if (!res.ok) throw new Error(`bucket ${url}: ${res.status}`);
   return (await res.json()) as BucketRow[];
 }
