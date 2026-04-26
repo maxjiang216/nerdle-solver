@@ -289,7 +289,9 @@ inline int maxi_partition_tie_depth_for_interactive(size_t num_candidates) {
  */
 inline std::string best_guess_partition_policy(const std::vector<std::string>& all_eqs,
                                               const std::vector<size_t>& candidate_indices, int N,
-                                              int tries_remaining, int partition_tie_depth = 0) {
+                                              int tries_remaining, int partition_tie_depth = 0,
+                                              PartitionFbBudget fb_budget = PartitionFbBudget::Interactive,
+                                              const std::vector<uint32_t>* shared_full_fb = nullptr) {
     if (candidate_indices.empty())
         return "";
     if (candidate_indices.size() == 1)
@@ -297,7 +299,10 @@ inline std::string best_guess_partition_policy(const std::vector<std::string>& a
     if (tries_remaining < 1)
         return all_eqs[candidate_indices[0]];
 
-    PartitionGreedyEvaluator ev(all_eqs, N, tries_remaining, partition_tie_depth, PartitionFbBudget::Interactive);
+    /* When shared_full_fb is set (n×n, row-major g,s), no matrix alloc/build per call — crucial for
+     * tools (e.g. partition_report exact-aggregate) that call this at every game-tree node. */
+    PartitionGreedyEvaluator ev(all_eqs, N, tries_remaining, partition_tie_depth, fb_budget,
+                                shared_full_fb);
     ev.build_feedback_matrix();
     return ev.best_guess_string(candidate_indices, tries_remaining);
 }

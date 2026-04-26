@@ -1,6 +1,6 @@
 /**
  * Exact guess-count distribution for the entropy (v2) strategy using the same
- * "partition tree" as bench_partition_aggregate: at each state the secret is
+ * "partition tree" as partition_report (exact aggregate): at each state the secret is
  * uniform on the candidate set, so we group by feedback and recurse.
  *
  * Matches bench_solve / bench_nerdle for PlayStrategy::Entropy: fixed first

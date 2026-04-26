@@ -29,8 +29,8 @@ solve_quadnerdle: $(SRCDIR)/solve_quadnerdle.cpp $(SRCDIR)/nerdle_core.hpp
 bench_nerdle: $(SRCDIR)/bench_nerdle.cpp $(SRCDIR)/bench_solve.hpp $(SRCDIR)/equation_canonical.hpp $(SRCDIR)/nerdle_core.hpp $(SRCDIR)/micro_policy.hpp $(SRCDIR)/optimal_policy_build.hpp
 	$(CXX) $(CXXFLAGS) -fopenmp -o $(BINDIR)/$@ $(SRCDIR)/bench_nerdle.cpp
 
-bench_partition_aggregate: $(SRCDIR)/bench_partition_aggregate.cpp $(SRCDIR)/equation_canonical.hpp $(SRCDIR)/nerdle_core.hpp
-	$(CXX) $(CXXFLAGS) -fopenmp -Isrc -o $(BINDIR)/$@ $(SRCDIR)/bench_partition_aggregate.cpp
+bench_partition_aggregate: $(SRCDIR)/partition_report.cpp $(SRCDIR)/equation_canonical.hpp $(SRCDIR)/nerdle_core.hpp
+	$(CXX) $(CXXFLAGS) -fopenmp -I$(SRCDIR) -o $(BINDIR)/$@ $(SRCDIR)/partition_report.cpp
 
 bench_entropy_aggregate: $(SRCDIR)/bench_entropy_aggregate.cpp $(SRCDIR)/equation_canonical.hpp $(SRCDIR)/nerdle_core.hpp
 	$(CXX) $(CXXFLAGS) -fopenmp -Isrc -o $(BINDIR)/$@ $(SRCDIR)/bench_entropy_aggregate.cpp
