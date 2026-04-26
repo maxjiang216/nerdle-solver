@@ -9,7 +9,7 @@ WEB_ONLY=0
 usage() {
   echo "Regenerate partition JSON, Micro policy copy, and the esbuild bundle."
   echo "Usage: $0 [--web-only] [--help]"
-  echo "  (default)  make browser_partition_data + npm ci/install + npm run build in web/"
+  echo "  (default)  make browser_partition_data_web + npm ci/install + npm run build in web/"
   echo "  --web-only skip Make; only install + bundle (faster when only web/src changed)"
 }
 
@@ -31,7 +31,6 @@ else
     data/equations_6.txt
     data/equations_7.txt
     data/equations_8.txt
-    data/equations_10.txt
   )
   for f in "${pools[@]}"; do
     if [[ ! -f "$f" ]]; then
@@ -41,13 +40,13 @@ else
     fi
   done
 
-  if [[ ! -f data/optimal_policy_5.bin ]]; then
+  if [[ ! -f web/data/optimal_policy_5.bin ]] && [[ ! -f data/optimal_policy_5.bin ]]; then
     echo "[prepare_web_deploy] building Micro Bellman policy (make micro_policy)…"
     make micro_policy
   fi
 
-  echo "[prepare_web_deploy] make browser_partition_data…"
-  make browser_partition_data
+  echo "[prepare_web_deploy] make browser_partition_data_web…"
+  make browser_partition_data_web
 fi
 
 cd "$ROOT/web"

@@ -5,6 +5,7 @@
  *   ./browser_partition_artifacts --pool data/equations_8.txt --kind classic --out web/data/partition
  *   ./browser_partition_artifacts --pool data/equations_6.txt --kind binerdle --out web/data/partition
  *   ./browser_partition_artifacts --pool data/equations_10.txt --kind classic --out web/data/partition --manifest-only
+ *   ./browser_partition_artifacts --write-maxi-manifest-only --out web/data/partition
  *
  * For each (pool, opening from partition_fixed_opening_tie6), writes:
  *   {out}/{kind}_n{n}/manifest.json
@@ -125,6 +126,7 @@ int main(int argc, char** argv) {
     std::string kind = "classic";
     std::string out_root = "web/data/partition";
     bool manifest_only = false;
+    bool write_maxi_manifest_only = false;
 
     for (int i = 1; i < argc; i++) {
         std::string a = argv[i];
@@ -136,11 +138,48 @@ int main(int argc, char** argv) {
             out_root = argv[++i];
         else if (a == "--manifest-only")
             manifest_only = true;
+        else if (a == "--write-maxi-manifest-only")
+            write_maxi_manifest_only = true;
         else if (a == "-h" || a == "--help") {
             std::cerr << "Usage: browser_partition_artifacts --pool data/equations_N.txt [--kind classic|binerdle|quad] "
-                         "[--out web/data/partition] [--manifest-only]\n";
+                         "[--out web/data/partition] [--manifest-only]\n"
+                         "       browser_partition_artifacts --write-maxi-manifest-only [--out web/data/partition]\n";
             return 1;
         }
+    }
+
+    if (write_maxi_manifest_only) {
+        constexpr int N = 10;
+        constexpr const char* kPoolSizeStr = "2102375";
+        const char* opening_c = nerdle::partition_fixed_opening_tie6(N);
+        if (!opening_c) {
+            std::cerr << "internal: no partition opening for N=" << N << "\n";
+            return 1;
+        }
+        std::string opening(opening_c);
+        std::string opening_display = maxi_to_display(opening);
+        std::string subdir = out_root + "/classic_n" + std::to_string(N);
+        ensure_dir(subdir);
+        std::error_code ec;
+        std::filesystem::remove_all(subdir + "/b", ec);
+        std::filesystem::remove(subdir + "/pool_full.json", ec);
+
+        std::ostringstream man;
+        man << "{\n";
+        man << "  \"version\": 1,\n";
+        man << "  \"kind\": \"classic\",\n";
+        man << "  \"n\": " << N << ",\n";
+        man << "  \"opening\": " << json_escape(opening_display) << ",\n";
+        man << "  \"poolSize\": " << kPoolSizeStr << ",\n";
+        man << "  \"bucketDir\": \"b\",\n";
+        man << "  \"hasPoolFull\": false,\n";
+        man << "  \"hasOpeningBuckets\": false\n";
+        man << "}\n";
+        write_file(subdir + "/manifest.json", man.str());
+
+        std::cout << "Wrote static Maxi manifest under " << subdir << " (opening " << opening_display << ", pool "
+                  << kPoolSizeStr << ")\n";
+        return 0;
     }
 
     if (pool_path.empty()) {

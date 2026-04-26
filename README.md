@@ -56,28 +56,33 @@ make                           # build C++ tools
 The static pages under `web/` run **in the browser only**: **partition** for all modes except Micro strategy choice; **Micro (5-tile)** adds **Bellman (optimal)** vs **partition** using `web/data/optimal_policy_5.bin`. There is no Python web server or `POST /api/step` in this UI.
 
 ```bash
-# One-shot: partition JSON + Micro policy copy + esbuild bundle (needs pools in data/)
+# One-shot: partition JSON + Micro policy + esbuild bundle (needs small pools in data/)
 make prepare_web_deploy
 # Same script: ./scripts/prepare_web_deploy.sh
 # After TS-only changes: ./scripts/prepare_web_deploy.sh --web-only
 
 # Manual steps (equivalent to full prepare_web_deploy):
 make browser_partition_artifacts
-make browser_partition_data
+make browser_partition_data_web
 cd web && npm install && npm run build
+# Full local regen including Maxi manifest from equations_10.txt:
+# make browser_partition_data
 # Optional: http://127.0.0.1:8123/ — npm run dev
 ```
 
-- **Artifacts:** `make browser_partition_data` writes `web/data/partition/{classic,binerdle,quad}_nN/` (see [docs/PARTITION_BROWSER_ARTIFACTS.md](docs/PARTITION_BROWSER_ARTIFACTS.md)) and runs `micro_policy_web` to copy `data/optimal_policy_5.bin` → `web/data/optimal_policy_5.bin` (run `make micro_policy` first if missing). Maxi (`n=10`) writes a manifest only, using the known recommended first guess (`56+4-21=39`), so deploy prep does not generate the huge post-opening bucket set.
+- **Artifacts:** `make browser_partition_data_web` writes `web/data/partition/{classic,binerdle,quad}_nN/` (see [docs/PARTITION_BROWSER_ARTIFACTS.md](docs/PARTITION_BROWSER_ARTIFACTS.md)) from tracked `data/equations_{5,6,7,8}.txt`, runs `micro_policy_web` (uses committed `web/data/optimal_policy_5.bin` or copies from `data/optimal_policy_5.bin` after `make micro_policy`). Maxi (`n=10`) is a static manifest only (`56+4-21=39`, pool size 2102375) — no `data/equations_10.txt` required. For a manifest derived from the live Maxi pool file, use `make browser_partition_data` locally.
 - **Regression check:** `npm run validate:partition --prefix web` compares the browser partition engine to `./solver_json` (the binary is only used for that test, not by the UI).
 - **Strategies (web):** Bellman = precomputed Micro policy; partition = browser partition engine for all lengths/modes.
 
 ### Deploying to Vercel (GitHub)
 
-1. From a dev machine with the C++ toolchain and pools, run **`make prepare_web_deploy`** (or **`./scripts/prepare_web_deploy.sh`**) so `web/data/partition/`, `web/data/optimal_policy_5.bin`, and `web/app.bundle.js` exist.
-2. **Commit** those generated files under `web/data/` and `web/app.bundle.js` (they are not gitignored; expect on the order of tens of MB for n≤8 partition buckets; Maxi is first-guess-only in the static deploy).
-3. In Vercel: **Import** the GitHub repo → **Root Directory**: `web` → Framework Preset: **Other** → **Build Command**: `npm run build` → **Install Command**: `npm install` (or `npm ci`). **Output** is the `web` folder itself (static `index.html`, `engine.html`, etc.).
-4. Node **18+** on Vercel matches `engines` in `web/package.json`.
+1. **Commit** source and small inputs: `data/equations_{5,6,7,8}.txt`, `web/data/optimal_policy_5.bin`, `web/src/**`, `Makefile`, `src/browser_partition_artifacts.cpp`, `scripts/prepare_web_deploy.sh`, `web/package*.json`, etc. Do **not** commit generated `web/data/partition/**` or `web/app.bundle.js` (they are gitignored; Vercel creates them at build time).
+2. In Vercel: **Import** the repo → **Root Directory**: `.` (repository root) → Framework: **Other**. Either rely on [vercel.json](vercel.json) or set manually:
+   - **Install Command**: `npm ci --prefix web`
+   - **Build Command**: `bash ./scripts/prepare_web_deploy.sh`
+   - **Output Directory**: `web`
+3. The build image must provide **`g++` with OpenMP** (`-fopenmp`) for `browser_partition_artifacts`. If a Vercel image ever lacks it, use a **custom build image** or move artifact generation to GitHub Actions and deploy the prebuilt `web/` output.
+4. Node **18+** matches `engines` in `web/package.json`.
 
 ---
 
