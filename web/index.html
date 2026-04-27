@@ -8,16 +8,24 @@
 </head>
 <body>
   <header class="site">
-    <h1>Computational Atelier: Nerdle solver</h1>
-    <nav>
-      <a href="index.html">Modes</a>
-      <a href="engine.html">Engine</a>
+    <a class="site-logo" href="index.html">Nerdle solver</a>
+    <nav class="mode-nav" id="mode-nav">
+      <a href="engine.html?kind=classic&n=5">Micro</a>
+      <a href="engine.html?kind=classic&n=6">Mini</a>
+      <a href="engine.html?kind=classic&n=7">Midi</a>
+      <a href="engine.html?kind=classic&n=8">Normal</a>
+      <a href="engine.html?kind=classic&n=10">Maxi</a>
+      <a href="engine.html?kind=binerdle&n=6">Mini Binerdle</a>
+      <a href="engine.html?kind=binerdle&n=8">Binerdle</a>
+      <a href="engine.html?kind=quad&n=8">Quad Nerdle</a>
+      <button class="nav-overflow-btn" id="nav-overflow-btn" aria-label="More modes" hidden>▾ More</button>
+      <div class="nav-overflow-menu" id="nav-overflow-menu" hidden></div>
     </nav>
   </header>
   <main>
     <div class="hero">
       <h2>Logic <span class="accent">orchestrated.</span></h2>
-      <p>Pick a game mode, then use the engine to enter guesses and Nerdle feedback (green / purple / black). The C++ backend recommends the next move and counts remaining valid equations.</p>
+      <p>Pick a game mode to open the engine. Enter your guesses and the Nerdle feedback (teal / purple / black) and the solver recommends the next move and counts remaining valid equations.</p>
     </div>
 
     <section class="mode-section">
@@ -25,7 +33,7 @@
       <div class="cards">
         <div class="card">
           <h4>Micro</h4>
-          <span class="meta">5 tiles</span>
+          <span class="meta">5 tiles · Bellman optimal</span>
           <a class="btn btn-primary" href="engine.html?kind=classic&amp;n=5">Open engine</a>
         </div>
         <div class="card">
@@ -55,12 +63,12 @@
       <h3>02 — Binerdle</h3>
       <div class="cards">
         <div class="card">
-          <h4>Binerdle mini</h4>
+          <h4>Mini Binerdle</h4>
           <span class="meta">2 × 6 tiles, 7 tries</span>
           <a class="btn btn-primary" href="engine.html?kind=binerdle&amp;n=6">Open engine</a>
         </div>
         <div class="card">
-          <h4>Binerdle normal</h4>
+          <h4>Binerdle</h4>
           <span class="meta">2 × 8 tiles, 7 tries</span>
           <a class="btn btn-primary" href="engine.html?kind=binerdle&amp;n=8">Open engine</a>
         </div>
@@ -71,7 +79,7 @@
       <h3>03 — Quad Nerdle</h3>
       <div class="cards">
         <div class="card pro">
-          <h4>Quad challenge</h4>
+          <h4>Quad Nerdle</h4>
           <span class="meta">4 × 8 tiles, 10 tries</span>
           <a class="btn btn-magenta" href="engine.html?kind=quad&amp;n=8">Open engine</a>
         </div>
@@ -79,8 +87,49 @@
     </section>
 
     <footer class="note">
-      Open <code>engine.html</code> from a static server (e.g. <code>cd web &amp;&amp; npm run dev</code>) or any HTTP root that serves this folder. Run <code>make browser_partition_data</code> and <code>npm run build</code> in <code>web/</code>. Micro Bellman needs <code>web/data/optimal_policy_5.bin</code> (<code>make micro_policy_web</code>).
+      Run <code>npm run dev</code> in <code>web/</code> to serve locally. Run <code>make browser_partition_data</code> and <code>npm run build</code> to prepare artifacts.
     </footer>
   </main>
+  <script>
+    (function () {
+      const nav = document.getElementById("mode-nav");
+      const btn = document.getElementById("nav-overflow-btn");
+      const menu = document.getElementById("nav-overflow-menu");
+      const links = Array.from(nav.querySelectorAll("a"));
+
+      function reflow() {
+        links.forEach((l) => { l.hidden = false; });
+        btn.hidden = true;
+        menu.hidden = true;
+        menu.innerHTML = "";
+
+        const navRight = nav.getBoundingClientRect().right;
+        const overflow = [];
+        for (let i = links.length - 1; i >= 0; i--) {
+          const r = links[i].getBoundingClientRect();
+          if (r.right > navRight - 10 || overflow.length > 0) {
+            overflow.unshift(links[i]);
+          }
+        }
+        if (overflow.length === 0) return;
+        overflow.forEach((l) => {
+          l.hidden = true;
+          const clone = l.cloneNode(true);
+          clone.hidden = false;
+          menu.appendChild(clone);
+        });
+        btn.hidden = false;
+      }
+
+      window.addEventListener("resize", reflow);
+      setTimeout(reflow, 100);
+
+      btn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        menu.hidden = !menu.hidden;
+      });
+      document.addEventListener("click", () => { menu.hidden = true; });
+    })();
+  </script>
 </body>
 </html>

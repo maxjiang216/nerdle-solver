@@ -8,57 +8,131 @@
 </head>
 <body>
   <header class="site">
-    <h1 id="engine-title">Solver engine</h1>
-    <nav>
-      <a href="index.html">Modes</a>
-      <a href="engine.html">Engine</a>
+    <a class="site-logo" href="index.html">Nerdle solver</a>
+    <nav class="mode-nav" id="mode-nav">
+      <a href="engine.html?kind=classic&n=5">Micro</a>
+      <a href="engine.html?kind=classic&n=6">Mini</a>
+      <a href="engine.html?kind=classic&n=7">Midi</a>
+      <a href="engine.html?kind=classic&n=8">Normal</a>
+      <a href="engine.html?kind=classic&n=10">Maxi</a>
+      <a href="engine.html?kind=binerdle&n=6">Mini Binerdle</a>
+      <a href="engine.html?kind=binerdle&n=8">Binerdle</a>
+      <a href="engine.html?kind=quad&n=8">Quad Nerdle</a>
+      <button class="nav-overflow-btn" id="nav-overflow-btn" aria-label="More modes" hidden>▾ More</button>
+      <div class="nav-overflow-menu" id="nav-overflow-menu" hidden></div>
     </nav>
   </header>
   <main>
     <div class="engine-layout">
       <div class="panel">
-        <h3>Solver input</h3>
-        <div class="toolbar">
-          <div class="strategy-toggle" id="strategy-toggle" hidden>
-            <button type="button" data-strat="bellman" id="btn-bellman" hidden>Bellman (optimal)</button>
-            <button type="button" data-strat="partition" id="btn-partition">Partition</button>
+        <div class="panel-title-row">
+          <h3 id="engine-title">Solver engine</h3>
+          <div class="toolbar-right">
+            <div class="strategy-toggle" id="strategy-toggle" hidden>
+              <button type="button" data-strat="bellman" id="btn-bellman" hidden>Bellman</button>
+              <button type="button" data-strat="partition" id="btn-partition">Partition</button>
+            </div>
+            <button type="button" class="btn btn-ghost" id="btn-reset">Reset</button>
           </div>
-          <button type="button" class="btn btn-ghost" id="btn-reset">Reset</button>
-          <button type="button" class="btn btn-primary" id="btn-refresh">Refresh engine</button>
         </div>
         <p class="strategy-hint" id="strategy-hint"></p>
 
-        <div>
-          <strong>Next suggestion</strong>
-          <div class="suggestion-box" id="suggestion">—</div>
-          <button type="button" class="btn btn-primary" id="btn-apply">Apply to grid</button>
+        <div class="suggestion-row">
+          <div>
+            <div class="suggestion-label">Suggested guess</div>
+            <div class="suggestion-box" id="suggestion">—</div>
+          </div>
+          <div class="remaining-inline">
+            <div class="suggestion-label">Remaining</div>
+            <div class="remaining-box" id="remaining">—</div>
+            <p class="strategy-hint" id="remaining-note"></p>
+          </div>
         </div>
 
-        <h3 style="margin-top:1.25rem">Current guess</h3>
+        <h3 style="margin-top:1rem;margin-bottom:0.4rem">Current guess</h3>
         <p class="strategy-hint" id="guess-hint"></p>
         <div id="combined-boards"></div>
 
         <div class="keypad" id="keypad"></div>
 
         <div class="toolbar" style="margin-top:1rem">
-          <button type="button" class="btn btn-primary" id="btn-submit">Submit guess + feedback</button>
+          <button type="button" class="btn btn-primary" id="btn-submit">Submit  <kbd>Enter</kbd></button>
         </div>
         <div class="msg-error" id="error-msg" hidden></div>
 
         <div class="history" id="history"></div>
       </div>
 
-      <div class="panel">
-        <h3>Remaining answers</h3>
-        <div class="remaining-box" id="remaining">—</div>
-        <p class="strategy-hint" id="remaining-note"></p>
-        <footer class="note" style="margin-top:1rem">
-          Teal = correct spot, purple = wrong spot, black = not in equation. First click on a tile selects it; later clicks cycle colors. <kbd>←</kbd> <kbd>→</kbd> move the highlight (wraps across boards in multi-board modes); <kbd>g</kbd> <kbd>p</kbd> <kbd>b</kbd> set color and move right. <kbd>Backspace</kbd> clears tile color; <kbd>Delete</kbd> erases the character; keypad ⌫ erases the character.
+      <div class="panel panel-side">
+        <footer class="note">
+          <strong>Controls</strong><br>
+          Teal = correct spot · purple = wrong spot · black = not in equation.<br><br>
+          <kbd>← →</kbd> move highlight (wraps across boards)<br>
+          <kbd>↑ ↓</kbd> switch board (same column)<br>
+          <kbd>g</kbd> <kbd>p</kbd> <kbd>b</kbd> set color and move right<br>
+          <kbd>Backspace</kbd> clears tile color<br>
+          <kbd>Delete</kbd> / keypad ⌫ erases character<br>
+          <kbd>Enter</kbd> submit guess + feedback<br>
+          <kbd>Ctrl Z</kbd> undo last submit<br><br>
+          First click on a tile selects it; click the same tile again to cycle colors.
         </footer>
       </div>
     </div>
   </main>
   <script defer src="app.bundle.js"></script>
   <script defer src="app.js"></script>
+  <script>
+    // Highlight the active mode link
+    (function () {
+      const p = new URLSearchParams(window.location.search);
+      const kind = p.get("kind") || "classic";
+      const n = p.get("n") || "8";
+      document.querySelectorAll(".mode-nav a").forEach((a) => {
+        const ap = new URLSearchParams(new URL(a.href, location.href).search);
+        if (ap.get("kind") === kind && ap.get("n") === n) a.classList.add("active");
+      });
+
+      // Overflow: hide links that don't fit, put them in a dropdown
+      const nav = document.getElementById("mode-nav");
+      const btn = document.getElementById("nav-overflow-btn");
+      const menu = document.getElementById("nav-overflow-menu");
+      const links = Array.from(nav.querySelectorAll("a"));
+
+      function reflow() {
+        // Reset
+        links.forEach((l) => { l.hidden = false; });
+        btn.hidden = true;
+        menu.hidden = true;
+        menu.innerHTML = "";
+
+        const navRight = nav.getBoundingClientRect().right;
+        const overflow = [];
+        for (let i = links.length - 1; i >= 0; i--) {
+          const r = links[i].getBoundingClientRect();
+          if (r.right > navRight - 10 || overflow.length > 0) {
+            overflow.unshift(links[i]);
+          }
+        }
+        if (overflow.length === 0) return;
+        overflow.forEach((l) => {
+          l.hidden = true;
+          const clone = l.cloneNode(true);
+          clone.hidden = false;
+          menu.appendChild(clone);
+        });
+        btn.hidden = false;
+      }
+
+      window.addEventListener("resize", reflow);
+      // Run after fonts/layout settle
+      setTimeout(reflow, 100);
+
+      btn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        menu.hidden = !menu.hidden;
+      });
+      document.addEventListener("click", () => { menu.hidden = true; });
+    })();
+  </script>
 </body>
 </html>
