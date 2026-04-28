@@ -69,7 +69,7 @@
     return (
       nav +
       "Click a tile to select it; click again to cycle teal → purple → black. " +
-      "g p b set color and move right. Backspace clears tile color; Delete erases the character. " +
+      "g p b set color and move right. Backspace clears tile color and moves left; Delete erases the character. " +
       "Enter submits. Ctrl+Z (or Cmd+Z) undoes the last submit."
     );
   }
@@ -389,6 +389,7 @@
     feedback[activeBoard][cursor] = "B";
     applyFeedbackDefaults();
     syncSingletonFeedback();
+    moveHighlight(-1);
     renderCombinedBoards();
   }
 
