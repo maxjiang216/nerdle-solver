@@ -131,21 +131,16 @@
       const known = knownGreenAtPosition(b);
       for (let i = 0; i < n; i++) {
         const ch = guessCells[i];
-        if (known[i] != null && ch && ch === known[i]) {
-          feedback[b][i] = "G";
-          continue;
-        }
-        if (known[i] != null && ch && ch !== known[i]) {
-          if (feedback[b][i] === "G") feedback[b][i] = "B";
-          continue;
-        }
         if (!ch) {
+          // No character typed → no meaningful feedback
           feedback[b][i] = "B";
           continue;
         }
-        if (feedback[b][i] === "G" && (known[i] == null || ch !== known[i])) {
-          feedback[b][i] = "B";
+        if (known[i] != null && ch === known[i]) {
+          // History mandates this position is green
+          feedback[b][i] = "G";
         }
+        // Otherwise leave whatever the user (or auto-apply) set
       }
     }
   }
