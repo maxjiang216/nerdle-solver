@@ -455,7 +455,7 @@
     const entry =
       kind === "classic"
         ? { guess: g, feedback: feedback[0].join("") }
-        : { guess: g, feedbacks: feedback.map((row) => row.join("")) };
+        : { guess: g, feedbacks: feedback.map((row, b) => isBoardSolved(b) ? "G".repeat(n) : row.join("")) };
     const proposedHistory = historyPayload().concat(
       kind === "classic"
         ? { guess: entry.guess, feedback: entry.feedback }

@@ -230,12 +230,16 @@ export async function browserPartitionStep(
           solved1 = true;
           const m = c1.filter((i) => store.getEq(i) === gNorm);
           if (m.length) c1 = [m[0]!];
-        } else c1 = filterIndices(c1, h.guess, f1, n, store);
+        } else if (!solved1) {
+          c1 = filterIndices(c1, h.guess, f1, n, store);
+        }
         if (isAllGreenFeedback(f2, n)) {
           solved2 = true;
           const m = c2.filter((i) => store.getEq(i) === gNorm);
           if (m.length) c2 = [m[0]!];
-        } else c2 = filterIndices(c2, h.guess, f2, n, store);
+        } else if (!solved2) {
+          c2 = filterIndices(c2, h.guess, f2, n, store);
+        }
         if (solved1 && solved2) {
           return {
             ok: true,
@@ -245,10 +249,10 @@ export async function browserPartitionStep(
             engine: "browser_partition",
           };
         }
-        if (c1.length === 0 || c2.length === 0) {
+        if ((!solved1 && c1.length === 0) || (!solved2 && c2.length === 0)) {
           const empty: string[] = [];
-          if (c1.length === 0) empty.push("board 1");
-          if (c2.length === 0) empty.push("board 2");
+          if (!solved1 && c1.length === 0) empty.push("board 1");
+          if (!solved2 && c2.length === 0) empty.push("board 2");
           return { ok: false, error: `No candidates remain for ${empty.join(" and ")} — check the feedback colors for that guess` };
         }
       }
@@ -289,6 +293,7 @@ export async function browserPartitionStep(
           if (m.length) c[b] = [m[0]!];
           continue;
         }
+        if (solved[b]) continue;
         c[b] = filterIndices(c[b]!, h.guess, fb, n, store);
         if (c[b]!.length === 0) return { ok: false, error: `No candidates remain for board ${b + 1} — check the feedback colors for that guess` };
       }
