@@ -205,7 +205,7 @@ export async function browserPartitionStep(
           };
         }
         cands = filterIndices(cands, h.guess, fb, n, store);
-        if (cands.length === 0) return { ok: false, error: "no candidates remain — check guess and feedback" };
+        if (cands.length === 0) return { ok: false, error: "No candidates remain — check the feedback colors for that guess" };
       }
 
       const turn = history.length;
@@ -230,12 +230,16 @@ export async function browserPartitionStep(
           solved1 = true;
           const m = c1.filter((i) => store.getEq(i) === gNorm);
           if (m.length) c1 = [m[0]!];
-        } else c1 = filterIndices(c1, h.guess, f1, n, store);
+        } else if (!solved1) {
+          c1 = filterIndices(c1, h.guess, f1, n, store);
+        }
         if (isAllGreenFeedback(f2, n)) {
           solved2 = true;
           const m = c2.filter((i) => store.getEq(i) === gNorm);
           if (m.length) c2 = [m[0]!];
-        } else c2 = filterIndices(c2, h.guess, f2, n, store);
+        } else if (!solved2) {
+          c2 = filterIndices(c2, h.guess, f2, n, store);
+        }
         if (solved1 && solved2) {
           return {
             ok: true,
@@ -245,8 +249,12 @@ export async function browserPartitionStep(
             engine: "browser_partition",
           };
         }
-        if (c1.length === 0 || c2.length === 0)
-          return { ok: false, error: "no candidates remain on one board — check feedback" };
+        if ((!solved1 && c1.length === 0) || (!solved2 && c2.length === 0)) {
+          const empty: string[] = [];
+          if (!solved1 && c1.length === 0) empty.push("board 1");
+          if (!solved2 && c2.length === 0) empty.push("board 2");
+          return { ok: false, error: `No candidates remain for ${empty.join(" and ")} — check the feedback colors for that guess` };
+        }
       }
 
       const turn = history.length;
@@ -262,10 +270,19 @@ export async function browserPartitionStep(
         solved2,
       );
       const sugg = store.toDisplay(normalizeGuessInput(guess, isMaxi), n);
+      const singletonAnswers: (string | null)[] = [
+        !solved1 && c1.length === 1
+          ? store.toDisplay(normalizeGuessInput(store.getEq(c1[0]!), isMaxi), n)
+          : null,
+        !solved2 && c2.length === 1
+          ? store.toDisplay(normalizeGuessInput(store.getEq(c2[0]!), isMaxi), n)
+          : null,
+      ];
       return {
         ok: true,
         suggestion: sugg,
         remaining: { boards: [c1.length, c2.length], product: c1.length * c2.length },
+        singletonAnswers,
         engine: "browser_partition",
       };
     }
@@ -285,8 +302,9 @@ export async function browserPartitionStep(
           if (m.length) c[b] = [m[0]!];
           continue;
         }
+        if (solved[b]) continue;
         c[b] = filterIndices(c[b]!, h.guess, fb, n, store);
-        if (c[b]!.length === 0) return { ok: false, error: "no candidates remain on one board — check feedback" };
+        if (c[b]!.length === 0) return { ok: false, error: `No candidates remain for board ${b + 1} — check the feedback colors for that guess` };
       }
       if (solved.every(Boolean)) {
         return {
@@ -311,10 +329,16 @@ export async function browserPartitionStep(
     );
     const sugg = store.toDisplay(normalizeGuessInput(guess, isMaxi), n);
     const prod = c[0]!.length * c[1]!.length * c[2]!.length * c[3]!.length;
+    const singletonAnswers: (string | null)[] = [0, 1, 2, 3].map((b) =>
+      !solved[b] && c[b]!.length === 1
+        ? store.toDisplay(normalizeGuessInput(store.getEq(c[b]![0]!), isMaxi), n)
+        : null,
+    );
     return {
       ok: true,
       suggestion: sugg,
       remaining: { boards: [c[0]!.length, c[1]!.length, c[2]!.length, c[3]!.length], product: prod },
+      singletonAnswers,
       engine: "browser_partition",
     };
   } catch (e) {

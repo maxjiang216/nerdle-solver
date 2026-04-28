@@ -34,26 +34,107 @@ header.site {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 1rem 1.5rem;
+  padding: 0.65rem 1.5rem;
   border-bottom: 1px solid var(--border);
   background: rgba(255, 255, 255, 0.5);
+  gap: 1rem;
+  min-height: 3rem;
 }
 
-header.site h1 {
-  margin: 0;
-  font-size: 1rem;
+.site-logo {
+  font-size: 0.95rem;
   font-weight: 700;
   letter-spacing: 0.02em;
+  text-decoration: none;
+  color: var(--text);
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 
-header.site nav a {
-  margin-left: 1.25rem;
+/* nav-wrapper holds the clipping nav + the overflow button/menu as siblings */
+.nav-wrapper {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex: 1;
+  min-width: 0;
+  justify-content: flex-end;
+}
+
+.mode-nav {
+  display: flex;
+  align-items: center;
+  gap: 0.9rem;
+  overflow: hidden;       /* clips links that don't fit */
+  flex-shrink: 1;
+  min-width: 0;
+  /* justify-content: flex-end so clipped links disappear on the LEFT */
+  justify-content: flex-end;
+}
+
+.mode-nav a {
   text-decoration: none;
   font-weight: 500;
+  font-size: 0.85rem;
+  white-space: nowrap;
+  color: var(--green);
+  padding: 0.2rem 0;
+  border-bottom: 2px solid transparent;
+  flex-shrink: 0;
 }
 
-header.site nav a:hover {
-  text-decoration: underline;
+.mode-nav a:hover {
+  border-bottom-color: var(--green);
+}
+
+.mode-nav a.active {
+  border-bottom-color: var(--green);
+  font-weight: 700;
+}
+
+.nav-overflow-btn {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: #fff;
+  font-size: 0.8rem;
+  font-weight: 600;
+  padding: 0.25rem 0.6rem;
+  cursor: pointer;
+  color: var(--green);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+/* Dropdown uses position:fixed so it is never clipped by overflow:hidden */
+.nav-overflow-menu {
+  position: fixed;
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.12);
+  z-index: 1000;
+  min-width: 150px;
+  padding: 0.4rem 0;
+}
+
+.nav-overflow-menu a {
+  display: block;
+  padding: 0.45rem 1rem;
+  text-decoration: none;
+  font-size: 0.85rem;
+  font-weight: 500;
+  color: var(--green);
+  white-space: nowrap;
+  border-bottom: none !important;
+}
+
+.nav-overflow-menu a:hover {
+  background: var(--bg-card);
+}
+
+.nav-overflow-menu a.active {
+  font-weight: 700;
 }
 
 main {
@@ -173,14 +254,17 @@ main {
 
 .engine-layout {
   display: grid;
-  grid-template-columns: 1fr 280px;
+  grid-template-columns: 1fr 220px;
   gap: 1.5rem;
   align-items: start;
 }
 
-@media (max-width: 900px) {
+@media (max-width: 860px) {
   .engine-layout {
     grid-template-columns: 1fr;
+  }
+  .panel-side {
+    display: none;
   }
 }
 
@@ -197,12 +281,54 @@ main {
   font-size: 1rem;
 }
 
+.panel-title-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-bottom: 0.5rem;
+}
+
+.panel-title-row h3 {
+  margin: 0;
+}
+
+.toolbar-right {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+}
+
 .toolbar {
   display: flex;
   flex-wrap: wrap;
   gap: 0.75rem;
   align-items: center;
   margin-bottom: 1rem;
+}
+
+.suggestion-row {
+  display: flex;
+  gap: 2rem;
+  align-items: flex-start;
+  flex-wrap: wrap;
+  margin-bottom: 0.5rem;
+}
+
+.suggestion-label {
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--green);
+  margin-bottom: 0.15rem;
+}
+
+.remaining-inline .remaining-box {
+  font-size: 1.2rem;
+  font-weight: 800;
 }
 
 .strategy-toggle {
@@ -373,17 +499,67 @@ kbd {
   min-width: 4.5rem;
 }
 
+.tile.tile-solved {
+  cursor: default;
+  opacity: 0.85;
+}
+
+.tile.combined.fb-grey-known {
+  background: #c5cac7;
+  border-color: #a8aea9;
+  color: #2a2e2c;
+  cursor: default;
+  opacity: 0.92;
+}
+
+.board-known-tag {
+  font-weight: 600;
+  opacity: 0.75;
+  color: var(--text);
+}
+
+.board-solved-tick {
+  color: var(--tile-green);
+}
+
 .history {
   margin-top: 1.25rem;
-  max-height: 220px;
-  overflow-y: auto;
   font-size: 0.8rem;
 }
 
+.history-header {
+  font-weight: 700;
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--green);
+  margin-bottom: 0.35rem;
+}
+
 .history-item {
-  padding: 0.35rem 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.3rem 0;
   border-bottom: 1px solid var(--border);
   font-family: ui-monospace, monospace;
+}
+
+.history-del {
+  background: none;
+  border: none;
+  color: #aaa;
+  cursor: pointer;
+  font-size: 0.75rem;
+  padding: 0.15rem 0.3rem;
+  border-radius: 4px;
+  flex-shrink: 0;
+  margin-left: 0.5rem;
+}
+
+.history-del:hover {
+  background: var(--bg-card);
+  color: #b03030;
 }
 
 .suggestion-box {
@@ -397,13 +573,6 @@ kbd {
 .remaining-box {
   font-size: 1.5rem;
   font-weight: 800;
-}
-
-.remaining-box .boards {
-  font-size: 0.9rem;
-  font-weight: 500;
-  opacity: 0.85;
-  margin-top: 0.25rem;
 }
 
 .msg-error {

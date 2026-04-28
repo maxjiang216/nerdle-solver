@@ -12,15 +12,11 @@
     strategyToggle: document.getElementById("strategy-toggle"),
     btnBellman: document.getElementById("btn-bellman"),
     btnPartition: document.getElementById("btn-partition"),
-    strategyHint: document.getElementById("strategy-hint"),
-    guessHint: document.getElementById("guess-hint"),
     suggestion: document.getElementById("suggestion"),
-    btnApply: document.getElementById("btn-apply"),
     combinedBoards: document.getElementById("combined-boards"),
     keypad: document.getElementById("keypad"),
     btnSubmit: document.getElementById("btn-submit"),
     btnReset: document.getElementById("btn-reset"),
-    btnRefresh: document.getElementById("btn-refresh"),
     errorMsg: document.getElementById("error-msg"),
     remaining: document.getElementById("remaining"),
     remainingNote: document.getElementById("remaining-note"),
@@ -34,12 +30,15 @@
   let cursor = 0;
   /** Which board receives g/p/b when using keyboard (click a tile to focus a board). */
   let activeBoard = 0;
-  /** `"board,col"` of the tile last selected by click; repeat click on that tile cycles color. Cleared when highlight moves by keyboard/typing. */
+  /** `"board,col"` of the tile last selected by click; repeat click on that tile cycles color. */
   let lastPointerTileKey = null;
   /** @type {('G'|'P'|'B')[][]} */
   let feedback = Array.from({ length: numBoards }, () => Array(n).fill("B"));
   /** @type {object[]} */
   let history = [];
+  /** From last engine response: per-board unique equation when count===1 (multi-board only). */
+  /** @type {(string|null)[]|null} */
+  let engineSingletonAnswers = null;
 
   const CYCLE = ["G", "P", "B"];
 
@@ -55,33 +54,94 @@
   function strategyHintText() {
     if (isMicroClassic) {
       return (
-        "Bellman (optimal): min expected guesses using data/optimal_policy_5.bin (copy via make micro_policy_web). " +
+        "Bellman (optimal): min expected guesses. " +
         "Partition: same browser engine as other lengths."
       );
     }
-    if (kind === "binerdle") {
-      return "Partition strategy in the browser (static data under web/data/partition/). Run make browser_partition_data after generating pools.";
-    }
-    if (kind === "quad") {
-      return "Partition strategy in the browser. Run make browser_partition_data after generating pools.";
-    }
-    if (n === 10) {
-      return "Partition in the browser. Maxi expects the recommended first guess unless you use a full pool artifact.";
-    }
-    return "Partition strategy in the browser (make browser_partition_data).";
+    return "";
   }
 
   function guessHintText() {
     const nav =
       numBoards > 1
-        ? "Arrow keys ← → move the highlighted cell (wraps across boards); ↑ ↓ switch boards at the same column. "
-        : "Arrow keys ← → move the highlighted cell. ";
+        ? "← → move the highlighted cell (wraps across boards); ↑ ↓ switch boards at the same column. "
+        : "← → move the highlighted cell. ";
     return (
       nav +
-      "Click a tile to select it; click again to cycle teal → purple → black. Type digits/symbols from the keypad. " +
-      "Slots that must still be green from your past guesses default to teal; others default to black. " +
-      "Keys g, p, b set color and move right. Backspace clears tile color; Delete erases the typed character."
+      "Click a tile to select it; click again to cycle teal → purple → black. " +
+      "g p b set color and move right. Backspace clears tile color and moves left; Delete erases the character. " +
+      "Enter submits. Ctrl+Z (or Cmd+Z) undoes the last submit."
     );
+  }
+
+  /** Whether board b is fully solved in history (all G feedback). */
+  function isBoardSolved(b) {
+    if (kind === "classic") return false;
+    for (const h of history) {
+      const fb = h.feedbacks[b];
+      if (fb && [...fb].every((c) => c === "G")) return true;
+    }
+    return false;
+  }
+
+  /** Answer string for board b if solved, else null. */
+  function solvedAnswer(b) {
+    if (kind === "classic") return null;
+    for (const h of history) {
+      const fb = h.feedbacks[b];
+      if (fb && [...fb].every((c) => c === "G")) return h.guess;
+    }
+    return null;
+  }
+
+  function guessesEquiv(a, b) {
+    if (typeof window.nerdleGuessesEquivalent === "function") {
+      return window.nerdleGuessesEquivalent(a, b, n);
+    }
+    return String(a) === String(b);
+  }
+
+  /** Unique candidate exists for this board but current shared guess ≠ that equation → show grey answer row. */
+  function singletonMismatchGrey(b) {
+    if (kind === "classic") return false;
+    const sing = engineSingletonAnswers && engineSingletonAnswers[b];
+    if (!sing || isBoardSolved(b)) return false;
+    return !guessesEquiv(guessCells.join(""), sing);
+  }
+
+  function interactiveBoardIndices() {
+    const out = [];
+    for (let b = 0; b < numBoards; b++) {
+      if (!isBoardSolved(b) && !singletonMismatchGrey(b)) out.push(b);
+    }
+    return out;
+  }
+
+  function ensureActiveBoardInteractive() {
+    const act = interactiveBoardIndices();
+    if (act.length === 0) return;
+    if (!act.includes(activeBoard)) {
+      activeBoard = act[0];
+      cursor = Math.min(cursor, n - 1);
+    }
+  }
+
+  /** Auto-set G/P/B on boards whose pool is narrowed to one equation (multi-board). */
+  function syncSingletonFeedback() {
+    if (kind === "classic") return;
+    if (!engineSingletonAnswers) return;
+    const g = guessCells.join("");
+    for (let b = 0; b < numBoards; b++) {
+      if (isBoardSolved(b)) continue;
+      const sing = engineSingletonAnswers[b];
+      if (!sing) continue;
+      if (guessesEquiv(g, sing)) {
+        feedback[b] = Array(n).fill("G");
+      } else if (typeof window.nerdleGuessFeedback === "function") {
+        const fb = window.nerdleGuessFeedback(g, sing, n);
+        feedback[b] = [...fb];
+      }
+    }
   }
 
   function setStrategy(s) {
@@ -106,11 +166,6 @@
     return [...s].slice(0, n);
   }
 
-  /**
-   * For each index i, the character that is fixed at that position (any past G at i).
-   * @param {number} boardIndex
-   * @returns {(string|null)[]}
-   */
   function knownGreenAtPosition(boardIndex) {
     const out = Array(n).fill(null);
     for (const h of history) {
@@ -123,35 +178,28 @@
     return out;
   }
 
-  /**
-   * Set G where history fixes the digit at i and the current guess matches; otherwise B,
-   * except preserve manual P when the cell is still ambiguous.
-   */
   function applyFeedbackDefaults() {
     for (let b = 0; b < numBoards; b++) {
+      if (isBoardSolved(b)) continue;
+      // Singleton boards get feedback from syncSingletonFeedback (guess vs unique candidate).
+      if (engineSingletonAnswers && engineSingletonAnswers[b]) continue;
       const known = knownGreenAtPosition(b);
       for (let i = 0; i < n; i++) {
         const ch = guessCells[i];
-        if (known[i] != null && ch && ch === known[i]) {
-          feedback[b][i] = "G";
-          continue;
-        }
-        if (known[i] != null && ch && ch !== known[i]) {
-          if (feedback[b][i] === "G") feedback[b][i] = "B";
-          continue;
-        }
         if (!ch) {
           feedback[b][i] = "B";
           continue;
         }
-        if (feedback[b][i] === "G" && (known[i] == null || ch !== known[i])) {
-          feedback[b][i] = "B";
+        if (known[i] != null && ch === known[i]) {
+          feedback[b][i] = "G";
         }
       }
     }
   }
 
   function cycleFeedback(boardIndex, index) {
+    if (isBoardSolved(boardIndex)) return;
+    if (singletonMismatchGrey(boardIndex)) return;
     const cur = feedback[boardIndex][index];
     const ix = CYCLE.indexOf(cur);
     const i = ix >= 0 ? ix : 0;
@@ -159,6 +207,8 @@
   }
 
   function setFeedbackAt(boardIndex, index, letter) {
+    if (isBoardSolved(boardIndex)) return false;
+    if (singletonMismatchGrey(boardIndex)) return false;
     const u = letter.toUpperCase();
     if (u === "G" || u === "P" || u === "B") {
       feedback[boardIndex][index] = u;
@@ -171,81 +221,129 @@
     moveHighlight(1);
   }
 
-  /** Move the feedback highlight: one step along boards×columns (left = −1, right = +1), wrapping the full grid. */
   function moveHighlight(delta) {
     lastPointerTileKey = null;
     if (numBoards === 1) {
       cursor = (cursor + delta + n) % n;
       return;
     }
-    const total = numBoards * n;
-    let linear = activeBoard * n + cursor;
+    const act = interactiveBoardIndices();
+    if (act.length === 0) return;
+    const total = act.length * n;
+    let ix = act.indexOf(activeBoard);
+    if (ix < 0) ix = 0;
+    let linear = ix * n + cursor;
     linear = (linear + delta + total) % total;
-    activeBoard = Math.floor(linear / n);
+    activeBoard = act[Math.floor(linear / n)];
     cursor = linear % n;
   }
 
   function moveActiveBoard(delta) {
     if (numBoards <= 1) return;
     lastPointerTileKey = null;
-    activeBoard = (activeBoard + delta + numBoards) % numBoards;
+    const act = interactiveBoardIndices();
+    if (act.length === 0) return;
+    const ix = act.indexOf(activeBoard);
+    const cur = ix < 0 ? 0 : ix;
+    const ni = (cur + delta + act.length) % act.length;
+    activeBoard = act[ni];
   }
 
   function renderCombinedBoards() {
     els.combinedBoards.innerHTML = "";
     for (let b = 0; b < numBoards; b++) {
+      const solved = isBoardSolved(b);
+      const answer = solvedAnswer(b);
+      const sing = engineSingletonAnswers && engineSingletonAnswers[b];
+      const greyKnown = singletonMismatchGrey(b);
       const block = document.createElement("div");
       block.className = "board-block";
       if (numBoards > 1) {
         const lab = document.createElement("span");
         lab.className = "board-label";
         lab.textContent = `Board ${b + 1}`;
+        if (solved) {
+          const tick = document.createElement("span");
+          tick.className = "board-solved-tick";
+          tick.textContent = " ✓";
+          lab.appendChild(tick);
+        } else if (greyKnown) {
+          const tag = document.createElement("span");
+          tag.className = "board-known-tag";
+          tag.textContent = " — unique answer";
+          lab.appendChild(tag);
+        }
         block.appendChild(lab);
       }
       const row = document.createElement("div");
       row.className = "tile-row";
-      for (let i = 0; i < n; i++) {
-        const t = document.createElement("div");
-        const f = feedback[b][i];
-        t.className =
-          "tile combined fb-" +
-          (f === "G" ? "green" : f === "P" ? "purple" : "black");
-        if (b === activeBoard && i === cursor) t.classList.add("tile-cursor-active");
-        const span = document.createElement("span");
-        span.className = "tile-char";
-        span.textContent = guessCells[i] || "·";
-        t.appendChild(span);
-        t.title = "First click selects; later clicks cycle teal → purple → black";
-        t.addEventListener("click", (ev) => {
-          ev.preventDefault();
-          const tileKey = `${b},${i}`;
-          activeBoard = b;
-          cursor = i;
-          try {
-            els.combinedBoards.focus({ preventScroll: true });
-          } catch (_) {
-            els.combinedBoards.focus();
-          }
-          if (lastPointerTileKey === tileKey) {
-            cycleFeedback(b, i);
-          } else {
-            lastPointerTileKey = tileKey;
-          }
-          renderCombinedBoards();
-        });
-        row.appendChild(t);
+
+      if (solved && answer) {
+        const chars = [...answer].slice(0, n);
+        for (let i = 0; i < n; i++) {
+          const t = document.createElement("div");
+          t.className = "tile combined fb-green tile-solved";
+          const span = document.createElement("span");
+          span.className = "tile-char";
+          span.textContent = chars[i] || "·";
+          t.appendChild(span);
+          row.appendChild(t);
+        }
+      } else if (greyKnown) {
+        const chars = [...sing].slice(0, n);
+        for (let i = 0; i < n; i++) {
+          const t = document.createElement("div");
+          t.className = "tile combined fb-grey-known tile-solved";
+          const span = document.createElement("span");
+          span.className = "tile-char";
+          span.textContent = chars[i] || "·";
+          t.appendChild(span);
+          row.appendChild(t);
+        }
+      } else {
+        for (let i = 0; i < n; i++) {
+          const t = document.createElement("div");
+          const f = feedback[b][i];
+          t.className =
+            "tile combined fb-" +
+            (f === "G" ? "green" : f === "P" ? "purple" : "black");
+          if (b === activeBoard && i === cursor) t.classList.add("tile-cursor-active");
+          const span = document.createElement("span");
+          span.className = "tile-char";
+          span.textContent = guessCells[i] || "·";
+          t.appendChild(span);
+          t.title = "First click selects; click again to cycle teal → purple → black";
+          t.addEventListener("click", (ev) => {
+            ev.preventDefault();
+            const tileKey = `${b},${i}`;
+            activeBoard = b;
+            cursor = i;
+            try {
+              els.combinedBoards.focus({ preventScroll: true });
+            } catch (_) {
+              els.combinedBoards.focus();
+            }
+            if (lastPointerTileKey === tileKey) {
+              cycleFeedback(b, i);
+            } else {
+              lastPointerTileKey = tileKey;
+            }
+            renderCombinedBoards();
+          });
+          row.appendChild(t);
+        }
       }
+
       block.appendChild(row);
       els.combinedBoards.appendChild(block);
     }
+    ensureActiveBoardInteractive();
   }
 
   function buildKeypad() {
     els.keypad.innerHTML = "";
     const keys = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "0", "+", "-", "*", "/", "(", ")", "="];
-    if (n === 10) {
-      keys.push("²", "³");
-    }
+    if (n === 10) keys.push("²", "³");
     keys.forEach((k) => {
       const btn = document.createElement("button");
       btn.type = "button";
@@ -269,6 +367,7 @@
       lastPointerTileKey = null;
       feedback = Array.from({ length: numBoards }, () => Array(n).fill("B"));
       applyFeedbackDefaults();
+      syncSingletonFeedback();
       renderCombinedBoards();
     });
     els.keypad.appendChild(clr);
@@ -280,18 +379,20 @@
     guessCells[cursor] = k;
     cursor = Math.min(n - 1, cursor + 1);
     applyFeedbackDefaults();
+    syncSingletonFeedback();
     renderCombinedBoards();
   }
 
-  /** Keyboard Backspace: clear feedback color on the highlighted tile (then re-apply history defaults). */
   function backspaceFeedback() {
     lastPointerTileKey = null;
+    if (singletonMismatchGrey(activeBoard)) return;
     feedback[activeBoard][cursor] = "B";
     applyFeedbackDefaults();
+    syncSingletonFeedback();
+    moveHighlight(-1);
     renderCombinedBoards();
   }
 
-  /** Keyboard Delete / keypad ⌫: erase guess character at the highlight (or step left if empty). */
   function deleteDigit() {
     lastPointerTileKey = null;
     if (guessCells[cursor]) {
@@ -301,6 +402,7 @@
       guessCells[cursor] = "";
     }
     applyFeedbackDefaults();
+    syncSingletonFeedback();
     renderCombinedBoards();
   }
 
@@ -315,6 +417,7 @@
     if (!data.ok) {
       els.suggestion.textContent = "—";
       els.remaining.textContent = "—";
+      engineSingletonAnswers = null;
       showError(data.error || "request failed");
       return;
     }
@@ -322,6 +425,8 @@
       els.suggestion.textContent = data.suggestion || guessCells.join("");
       els.remaining.textContent = "Solved";
       els.remainingNote.textContent = "";
+      engineSingletonAnswers = null;
+      autoApplySuggestion(data.suggestion, null, null);
       return;
     }
     els.suggestion.textContent = data.suggestion || "—";
@@ -338,23 +443,43 @@
       els.remaining.textContent = "—";
       els.remainingNote.textContent = "";
     }
+    autoApplySuggestion(data.suggestion, data.remaining, data.singletonAnswers);
+  }
+
+  function autoApplySuggestion(sugg, remainingData, singletonAnswers) {
+    engineSingletonAnswers = singletonAnswers || null;
+    if (!sugg || sugg === "—") {
+      syncSingletonFeedback();
+      renderCombinedBoards();
+      return;
+    }
+    lastPointerTileKey = null;
+    guessCells = splitGuessString(sugg);
+    while (guessCells.length < n) guessCells.push("");
+    guessCells = guessCells.slice(0, n);
+    cursor = 0;
+    applyFeedbackDefaults();
+    syncSingletonFeedback();
+    if (typeof remainingData === "number" && remainingData === 1) {
+      for (let b = 0; b < numBoards; b++) {
+        if (!isBoardSolved(b)) feedback[b] = Array(n).fill("G");
+      }
+    }
+    renderCombinedBoards();
   }
 
   async function solveHistory(hist) {
     if (isMicroClassic && strategy === "bellman" && typeof window.nerdleMicroBellmanClassic === "function") {
       try {
         const data = await window.nerdleMicroBellmanClassic("", hist);
-        if (data.ok) return data;
         return data;
       } catch (e) {
         return { ok: false, error: String(e) };
       }
     }
-
     if (isMicroClassic && strategy === "bellman") {
-      return { ok: false, error: "Micro Bellman engine not loaded (build web bundle: cd web && npm run build)." };
+      return { ok: false, error: "Micro Bellman engine not loaded." };
     }
-
     if (typeof window.nerdleBrowserPartition === "function") {
       try {
         return await window.nerdleBrowserPartition("", kind, n, hist);
@@ -362,8 +487,7 @@
         return { ok: false, error: String(e) };
       }
     }
-
-    return { ok: false, error: "Browser engine not loaded (build web bundle: cd web && npm run build)." };
+    return { ok: false, error: "Browser engine not loaded (run: cd web && npm run build)." };
   }
 
   async function refreshEngine() {
@@ -377,14 +501,43 @@
   }
 
   function renderHistory() {
-    els.history.innerHTML = "<strong>History</strong>";
+    els.history.innerHTML = "";
+    if (history.length === 0) return;
+    const header = document.createElement("div");
+    header.className = "history-header";
+    header.textContent = "History";
+    els.history.appendChild(header);
     history.forEach((h, i) => {
       const d = document.createElement("div");
       d.className = "history-item";
-      if (kind === "classic") d.textContent = `${i + 1}. ${h.guess}  → ${h.feedback}`;
-      else d.textContent = `${i + 1}. ${h.guess}  →  ${h.feedbacks.join(" | ")}`;
+      const text = document.createElement("span");
+      if (kind === "classic") text.textContent = `${i + 1}. ${h.guess}  → ${h.feedback}`;
+      else text.textContent = `${i + 1}. ${h.guess}  →  ${h.feedbacks.join(" | ")}`;
+      d.appendChild(text);
+      const del = document.createElement("button");
+      del.type = "button";
+      del.className = "history-del";
+      del.title = "Remove this guess from history";
+      del.textContent = "✕";
+      del.addEventListener("click", () => deleteHistoryEntry(i));
+      d.appendChild(del);
       els.history.appendChild(d);
     });
+  }
+
+  async function deleteHistoryEntry(idx) {
+    history.splice(idx, 1);
+    // If the removed entry was the last one, restore its guess to the grid
+    // (undo-style). Otherwise just recompute.
+    guessCells = Array(n).fill("");
+    cursor = 0;
+    lastPointerTileKey = null;
+    feedback = Array.from({ length: numBoards }, () => Array(n).fill("B"));
+    applyFeedbackDefaults();
+    renderCombinedBoards();
+    renderHistory();
+    showError("");
+    await refreshEngine();
   }
 
   async function submitRow() {
@@ -397,7 +550,7 @@
     const entry =
       kind === "classic"
         ? { guess: g, feedback: feedback[0].join("") }
-        : { guess: g, feedbacks: feedback.map((row) => row.join("")) };
+        : { guess: g, feedbacks: feedback.map((row, b) => isBoardSolved(b) ? "G".repeat(n) : row.join("")) };
     const proposedHistory = historyPayload().concat(
       kind === "classic"
         ? { guess: entry.guess, feedback: entry.feedback }
@@ -409,14 +562,45 @@
       return;
     }
     history.push(entry);
-    guessCells = Array(n).fill("");
-    cursor = 0;
     lastPointerTileKey = null;
     feedback = Array.from({ length: numBoards }, () => Array(n).fill("B"));
-    applyFeedbackDefaults();
-    renderCombinedBoards();
     renderHistory();
     applySolverResponse(data);
+  }
+
+  /** Undo: pop last history entry and restore its guess + feedback to the grid. */
+  async function undoSubmit() {
+    if (history.length === 0) return;
+    const last = history.pop();
+    lastPointerTileKey = null;
+    guessCells = splitGuessString(last.guess);
+    while (guessCells.length < n) guessCells.push("");
+    if (kind === "classic") {
+      feedback = [last.feedback.split("")];
+    } else {
+      feedback = last.feedbacks.map((f) => f.split(""));
+    }
+    cursor = 0;
+    renderCombinedBoards();
+    renderHistory();
+    showError("");
+    const data = await solveHistory(historyPayload());
+    if (data.ok) {
+      engineSingletonAnswers = data.singletonAnswers || null;
+      els.suggestion.textContent = data.suggestion || "—";
+      if (typeof data.remaining === "number") {
+        els.remaining.textContent = data.remaining.toLocaleString();
+        els.remainingNote.textContent = "Valid equations in pool consistent with your clues.";
+      } else if (data.remaining && Array.isArray(data.remaining.boards)) {
+        const br = data.remaining.boards;
+        const prod = data.remaining.product != null ? data.remaining.product : data.remaining_product;
+        els.remaining.textContent = br.map((x) => x.toLocaleString()).join(" · ");
+        els.remainingNote.textContent =
+          "Per-board counts" + (prod != null ? ` (product ${Number(prod).toLocaleString()})` : "") + ".";
+      }
+      syncSingletonFeedback();
+      renderCombinedBoards();
+    }
   }
 
   function resetAll() {
@@ -425,6 +609,7 @@
     cursor = 0;
     activeBoard = 0;
     lastPointerTileKey = null;
+    engineSingletonAnswers = null;
     feedback = Array.from({ length: numBoards }, () => Array(n).fill("B"));
     applyFeedbackDefaults();
     renderCombinedBoards();
@@ -438,14 +623,31 @@
     if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable)) return;
 
     const key = ev.key;
-    if (key === "g" || key === "G" || key === "p" || key === "P" || key === "b" || key === "B") {
+
+    // Ctrl/Cmd+Z = undo
+    if (key === "z" && (ev.ctrlKey || ev.metaKey)) {
       ev.preventDefault();
-      const letter = key.toUpperCase();
-      if (setFeedbackAt(activeBoard, cursor, letter)) {
-        advanceCursor();
-        renderCombinedBoards();
-      }
+      undoSubmit();
       return;
+    }
+
+    if (key === "Enter") {
+      ev.preventDefault();
+      submitRow();
+      return;
+    }
+
+    if (key === "g" || key === "G" || key === "p" || key === "P" || key === "b" || key === "B") {
+      // Don't intercept if a modifier is held (browser shortcuts)
+      if (!ev.ctrlKey && !ev.metaKey && !ev.altKey) {
+        ev.preventDefault();
+        const letter = key.toUpperCase();
+        if (setFeedbackAt(activeBoard, cursor, letter)) {
+          advanceCursor();
+          renderCombinedBoards();
+        }
+        return;
+      }
     }
     if (key === "ArrowLeft") {
       ev.preventDefault();
@@ -482,70 +684,46 @@
       return;
     }
     const map = {
-      "0": "0",
-      "1": "1",
-      "2": "2",
-      "3": "3",
-      "4": "4",
-      "5": "5",
-      "6": "6",
-      "7": "7",
-      "8": "8",
-      "9": "9",
-      "+": "+",
-      "-": "-",
-      "*": "*",
-      "/": "/",
-      "(": "(",
-      ")": ")",
-      "=": "=",
+      "0": "0", "1": "1", "2": "2", "3": "3", "4": "4",
+      "5": "5", "6": "6", "7": "7", "8": "8", "9": "9",
+      "+": "+", "-": "-", "*": "*", "/": "/",
+      "(": "(", ")": ")", "=": "=",
     };
     if (map[key] !== undefined) {
       ev.preventDefault();
       typeKey(map[key]);
       return;
     }
-    if (n === 10 && (key === "^" || ev.code === "Digit6")) {
-      /* optional: could map ^2 - skip */
-    }
   }
 
-  /* init */
+  /* ── init ── */
   els.combinedBoards.tabIndex = 0;
   els.combinedBoards.setAttribute("role", "grid");
   els.combinedBoards.setAttribute("aria-label", "Current guess and per-tile feedback");
 
   els.title.textContent = modeTitle();
-  document.title = modeTitle() + " — engine";
-  els.strategyHint.textContent = strategyHintText();
-  els.guessHint.textContent = guessHintText();
+  document.title = modeTitle() + " — Nerdle solver";
 
+  // Strategy toggle: only show for Micro (Bellman vs Partition)
   els.strategyToggle.hidden = !isMicroClassic;
   els.btnBellman.hidden = !isMicroClassic;
   if (isMicroClassic) {
+    const hint = document.getElementById("strategy-hint");
+    if (hint) hint.textContent = strategyHintText();
     els.btnBellman.addEventListener("click", () => setStrategy("bellman"));
     els.btnPartition.addEventListener("click", () => setStrategy("partition"));
     els.btnBellman.classList.toggle("active", strategy === "bellman");
     els.btnPartition.classList.toggle("active", strategy === "partition");
   } else {
-    els.btnPartition.classList.add("active");
+    const hint = document.getElementById("strategy-hint");
+    if (hint) hint.hidden = true;
   }
 
-  els.btnApply.addEventListener("click", () => {
-    const s = els.suggestion.textContent.trim();
-    if (!s || s === "—") return;
-    lastPointerTileKey = null;
-    guessCells = splitGuessString(s);
-    while (guessCells.length < n) guessCells.push("");
-    guessCells = guessCells.slice(0, n);
-    cursor = Math.min(n - 1, Math.max(0, [...s].length - 1));
-    applyFeedbackDefaults();
-    renderCombinedBoards();
-  });
+  const guessHintEl = document.getElementById("guess-hint");
+  if (guessHintEl) guessHintEl.textContent = guessHintText();
 
   els.btnSubmit.addEventListener("click", submitRow);
   els.btnReset.addEventListener("click", resetAll);
-  els.btnRefresh.addEventListener("click", () => refreshEngine());
 
   document.addEventListener("keydown", onKeyDown);
 
