@@ -342,7 +342,7 @@
       els.suggestion.textContent = data.suggestion || guessCells.join("");
       els.remaining.textContent = "Solved";
       els.remainingNote.textContent = "";
-      autoApplySuggestion(data.suggestion);
+      autoApplySuggestion(data.suggestion, null);
       return;
     }
     els.suggestion.textContent = data.suggestion || "—";
@@ -359,10 +359,10 @@
       els.remaining.textContent = "—";
       els.remainingNote.textContent = "";
     }
-    autoApplySuggestion(data.suggestion);
+    autoApplySuggestion(data.suggestion, data.remaining);
   }
 
-  function autoApplySuggestion(sugg) {
+  function autoApplySuggestion(sugg, remainingData) {
     if (!sugg || sugg === "—") return;
     lastPointerTileKey = null;
     guessCells = splitGuessString(sugg);
@@ -370,6 +370,17 @@
     guessCells = guessCells.slice(0, n);
     cursor = 0;
     applyFeedbackDefaults();
+    // When a board has exactly 1 candidate left, the suggestion IS the answer —
+    // pre-fill its feedback to all-green so the user can just hit Enter.
+    if (typeof remainingData === "number" && remainingData === 1) {
+      for (let b = 0; b < numBoards; b++) {
+        if (!isBoardSolved(b)) feedback[b] = Array(n).fill("G");
+      }
+    } else if (remainingData && Array.isArray(remainingData.boards)) {
+      remainingData.boards.forEach((count, b) => {
+        if (count === 1 && !isBoardSolved(b)) feedback[b] = Array(n).fill("G");
+      });
+    }
     renderCombinedBoards();
   }
 
@@ -491,7 +502,7 @@
     showError("");
     const data = await solveHistory(historyPayload());
     if (data.ok) {
-      // show suggestion but don't auto-apply (user is editing the undone row)
+      // Undo restores the guess+feedback for editing — show suggestion but don't overwrite grid
       els.suggestion.textContent = data.suggestion || "—";
       if (typeof data.remaining === "number") {
         els.remaining.textContent = data.remaining.toLocaleString();
