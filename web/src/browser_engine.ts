@@ -205,7 +205,7 @@ export async function browserPartitionStep(
           };
         }
         cands = filterIndices(cands, h.guess, fb, n, store);
-        if (cands.length === 0) return { ok: false, error: "no candidates remain — check guess and feedback" };
+        if (cands.length === 0) return { ok: false, error: "No candidates remain — check the feedback colors for that guess" };
       }
 
       const turn = history.length;
@@ -245,8 +245,12 @@ export async function browserPartitionStep(
             engine: "browser_partition",
           };
         }
-        if (c1.length === 0 || c2.length === 0)
-          return { ok: false, error: "no candidates remain on one board — check feedback" };
+        if (c1.length === 0 || c2.length === 0) {
+          const empty: string[] = [];
+          if (c1.length === 0) empty.push("board 1");
+          if (c2.length === 0) empty.push("board 2");
+          return { ok: false, error: `No candidates remain for ${empty.join(" and ")} — check the feedback colors for that guess` };
+        }
       }
 
       const turn = history.length;
@@ -286,7 +290,7 @@ export async function browserPartitionStep(
           continue;
         }
         c[b] = filterIndices(c[b]!, h.guess, fb, n, store);
-        if (c[b]!.length === 0) return { ok: false, error: "no candidates remain on one board — check feedback" };
+        if (c[b]!.length === 0) return { ok: false, error: `No candidates remain for board ${b + 1} — check the feedback colors for that guess` };
       }
       if (solved.every(Boolean)) {
         return {
