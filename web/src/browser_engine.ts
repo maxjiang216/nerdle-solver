@@ -270,10 +270,19 @@ export async function browserPartitionStep(
         solved2,
       );
       const sugg = store.toDisplay(normalizeGuessInput(guess, isMaxi), n);
+      const singletonAnswers: (string | null)[] = [
+        !solved1 && c1.length === 1
+          ? store.toDisplay(normalizeGuessInput(store.getEq(c1[0]!), isMaxi), n)
+          : null,
+        !solved2 && c2.length === 1
+          ? store.toDisplay(normalizeGuessInput(store.getEq(c2[0]!), isMaxi), n)
+          : null,
+      ];
       return {
         ok: true,
         suggestion: sugg,
         remaining: { boards: [c1.length, c2.length], product: c1.length * c2.length },
+        singletonAnswers,
         engine: "browser_partition",
       };
     }
@@ -320,10 +329,16 @@ export async function browserPartitionStep(
     );
     const sugg = store.toDisplay(normalizeGuessInput(guess, isMaxi), n);
     const prod = c[0]!.length * c[1]!.length * c[2]!.length * c[3]!.length;
+    const singletonAnswers: (string | null)[] = [0, 1, 2, 3].map((b) =>
+      !solved[b] && c[b]!.length === 1
+        ? store.toDisplay(normalizeGuessInput(store.getEq(c[b]![0]!), isMaxi), n)
+        : null,
+    );
     return {
       ok: true,
       suggestion: sugg,
       remaining: { boards: [c[0]!.length, c[1]!.length, c[2]!.length, c[3]!.length], product: prod },
+      singletonAnswers,
       engine: "browser_partition",
     };
   } catch (e) {

@@ -504,6 +504,20 @@ kbd {
   opacity: 0.85;
 }
 
+.tile.combined.fb-grey-known {
+  background: #c5cac7;
+  border-color: #a8aea9;
+  color: #2a2e2c;
+  cursor: default;
+  opacity: 0.92;
+}
+
+.board-known-tag {
+  font-weight: 600;
+  opacity: 0.75;
+  color: var(--text);
+}
+
 .board-solved-tick {
   color: var(--tile-green);
 }

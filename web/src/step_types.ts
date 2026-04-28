@@ -9,6 +9,8 @@ export type StepOk = {
   ok: true;
   suggestion: string;
   remaining: RemainingClassic | RemainingMulti;
+  /** Binerdle / Quad: display equation when that board has exactly one remaining candidate (unsolved). Null when >1 candidate or already solved in history. */
+  singletonAnswers?: (string | null)[];
   solved?: boolean;
   engine: string;
 };
