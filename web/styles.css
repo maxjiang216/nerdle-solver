@@ -51,18 +51,29 @@ header.site {
   flex-shrink: 0;
 }
 
+/* nav-wrapper holds the clipping nav + the overflow button/menu as siblings */
+.nav-wrapper {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex: 1;
+  min-width: 0;
+  justify-content: flex-end;
+}
+
 .mode-nav {
   display: flex;
   align-items: center;
-  gap: 0;
-  position: relative;
-  overflow: hidden;
-  flex: 1;
+  gap: 0.9rem;
+  overflow: hidden;       /* clips links that don't fit */
+  flex-shrink: 1;
+  min-width: 0;
+  /* justify-content: flex-end so clipped links disappear on the LEFT */
   justify-content: flex-end;
 }
 
 .mode-nav a {
-  margin-left: 0.9rem;
   text-decoration: none;
   font-weight: 500;
   font-size: 0.85rem;
@@ -70,6 +81,7 @@ header.site {
   color: var(--green);
   padding: 0.2rem 0;
   border-bottom: 2px solid transparent;
+  flex-shrink: 0;
 }
 
 .mode-nav a:hover {
@@ -82,7 +94,6 @@ header.site {
 }
 
 .nav-overflow-btn {
-  margin-left: 0.9rem;
   border: 1px solid var(--border);
   border-radius: 6px;
   background: #fff;
@@ -95,16 +106,15 @@ header.site {
   flex-shrink: 0;
 }
 
+/* Dropdown uses position:fixed so it is never clipped by overflow:hidden */
 .nav-overflow-menu {
-  position: absolute;
-  top: calc(100% + 6px);
-  right: 0;
+  position: fixed;
   background: #fff;
   border: 1px solid var(--border);
   border-radius: 8px;
-  box-shadow: 0 4px 16px rgba(0,0,0,0.1);
-  z-index: 100;
-  min-width: 140px;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.12);
+  z-index: 1000;
+  min-width: 150px;
   padding: 0.4rem 0;
 }
 
@@ -116,12 +126,15 @@ header.site {
   font-weight: 500;
   color: var(--green);
   white-space: nowrap;
-  margin-left: 0;
   border-bottom: none !important;
 }
 
 .nav-overflow-menu a:hover {
   background: var(--bg-card);
+}
+
+.nav-overflow-menu a.active {
+  font-weight: 700;
 }
 
 main {

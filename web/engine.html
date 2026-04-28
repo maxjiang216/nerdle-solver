@@ -9,18 +9,20 @@
 <body>
   <header class="site">
     <a class="site-logo" href="index.html">Nerdle solver</a>
-    <nav class="mode-nav" id="mode-nav">
-      <a href="engine.html?kind=classic&n=5">Micro</a>
-      <a href="engine.html?kind=classic&n=6">Mini</a>
-      <a href="engine.html?kind=classic&n=7">Midi</a>
-      <a href="engine.html?kind=classic&n=8">Normal</a>
-      <a href="engine.html?kind=classic&n=10">Maxi</a>
-      <a href="engine.html?kind=binerdle&n=6">Mini Binerdle</a>
-      <a href="engine.html?kind=binerdle&n=8">Binerdle</a>
-      <a href="engine.html?kind=quad&n=8">Quad Nerdle</a>
+    <div class="nav-wrapper">
+      <nav class="mode-nav" id="mode-nav">
+        <a href="engine.html?kind=classic&amp;n=5">Micro</a>
+        <a href="engine.html?kind=classic&amp;n=6">Mini</a>
+        <a href="engine.html?kind=classic&amp;n=7">Midi</a>
+        <a href="engine.html?kind=classic&amp;n=8">Normal</a>
+        <a href="engine.html?kind=classic&amp;n=10">Maxi</a>
+        <a href="engine.html?kind=binerdle&amp;n=6">Mini Binerdle</a>
+        <a href="engine.html?kind=binerdle&amp;n=8">Binerdle</a>
+        <a href="engine.html?kind=quad&amp;n=8">Quad Nerdle</a>
+      </nav>
       <button class="nav-overflow-btn" id="nav-overflow-btn" aria-label="More modes" hidden>▾ More</button>
       <div class="nav-overflow-menu" id="nav-overflow-menu" hidden></div>
-    </nav>
+    </div>
   </header>
   <main>
     <div class="engine-layout">
@@ -82,8 +84,8 @@
   <script defer src="app.bundle.js"></script>
   <script defer src="app.js"></script>
   <script>
-    // Highlight the active mode link
     (function () {
+      // Highlight active nav link
       const p = new URLSearchParams(window.location.search);
       const kind = p.get("kind") || "classic";
       const n = p.get("n") || "8";
@@ -92,46 +94,74 @@
         if (ap.get("kind") === kind && ap.get("n") === n) a.classList.add("active");
       });
 
-      // Overflow: hide links that don't fit, put them in a dropdown
+      const wrapper = document.querySelector(".nav-wrapper");
       const nav = document.getElementById("mode-nav");
       const btn = document.getElementById("nav-overflow-btn");
       const menu = document.getElementById("nav-overflow-menu");
       const links = Array.from(nav.querySelectorAll("a"));
+      const GAP = 14; // ~0.9rem
+
+      function positionMenu() {
+        const br = btn.getBoundingClientRect();
+        menu.style.top = (br.bottom + 6) + "px";
+        menu.style.right = (window.innerWidth - br.right) + "px";
+      }
 
       function reflow() {
-        // Reset
+        // Show all links to measure natural widths
         links.forEach((l) => { l.hidden = false; });
         btn.hidden = true;
         menu.hidden = true;
         menu.innerHTML = "";
 
-        const navRight = nav.getBoundingClientRect().right;
-        const overflow = [];
-        for (let i = links.length - 1; i >= 0; i--) {
-          const r = links[i].getBoundingClientRect();
-          if (r.right > navRight - 10 || overflow.length > 0) {
-            overflow.unshift(links[i]);
-          }
-        }
-        if (overflow.length === 0) return;
-        overflow.forEach((l) => {
-          l.hidden = true;
-          const clone = l.cloneNode(true);
-          clone.hidden = false;
-          menu.appendChild(clone);
-        });
+        // Available width for the nav (wrapper minus any gap)
+        const wrapperW = wrapper.getBoundingClientRect().width;
+        const linkWidths = links.map((l) => l.getBoundingClientRect().width);
+        const totalW = linkWidths.reduce((s, w) => s + w, 0) + GAP * (links.length - 1);
+
+        if (totalW <= wrapperW + 1) return; // all fit — done
+
+        // Show "More" button to measure it
         btn.hidden = false;
+        const btnW = btn.getBoundingClientRect().width + GAP;
+        const available = wrapperW - btnW;
+
+        // Determine how many links fit from the start (nav is flex-end so last ones are most visible)
+        // We'll keep the LAST N links visible and overflow the FIRST ones.
+        let used = 0;
+        let fitFromEnd = 0;
+        for (let i = links.length - 1; i >= 0; i--) {
+          const needed = linkWidths[i] + (fitFromEnd > 0 ? GAP : 0);
+          if (used + needed > available + 1) break;
+          used += needed;
+          fitFromEnd++;
+        }
+        const firstVisible = links.length - fitFromEnd;
+
+        links.forEach((l, i) => {
+          if (i < firstVisible) {
+            l.hidden = true;
+            const clone = l.cloneNode(true);
+            clone.hidden = false;
+            menu.appendChild(clone);
+          }
+        });
       }
 
-      window.addEventListener("resize", reflow);
-      // Run after fonts/layout settle
-      setTimeout(reflow, 100);
+      const ro = new ResizeObserver(reflow);
+      ro.observe(wrapper);
+      reflow();
 
       btn.addEventListener("click", (e) => {
         e.stopPropagation();
-        menu.hidden = !menu.hidden;
+        const wasHidden = menu.hidden;
+        menu.hidden = false; // show first so it has dimensions
+        positionMenu();
+        menu.hidden = !wasHidden;
       });
       document.addEventListener("click", () => { menu.hidden = true; });
+      window.addEventListener("scroll", () => { if (!menu.hidden) positionMenu(); }, true);
+      window.addEventListener("resize", () => { if (!menu.hidden) positionMenu(); });
     })();
   </script>
 </body>
