@@ -25,6 +25,7 @@ first_guess_staged_sample
 first_guess_tiered_sim
 list_partition_failures_8
 maxi_first_partition_sweep
+maxi_guarantee
 maxi_opening_partition_stats
 maxi_unique_partition_sample
 midi_exact
@@ -54,6 +55,7 @@ data/*
 !data/equations_7.txt
 !data/equations_8.txt
 !data/equations_10.txt
+!data/maxi_guarantee_overrides.tsv
 /equations_*.txt
 
 # Python

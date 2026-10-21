@@ -376,6 +376,20 @@ Exact-aggregate wall time: 34.57156782 s
 
 The **K = 10** (full symbol diversity) winner matches the max‑partition first guess from this repository — `kMaxiPartitionFixedOpening` in `src/partition_greedy.hpp` (`56+4-21=39`) and `./partition_report --pool data/equations_10.txt --tie-depth 6` on the generated pool. So the cascade and the in‑repo partition policy agree at the top level; the table above is the intermediate rungs (K = 4 … 9) only.
 
+**Maxi — guaranteed solve in 6 (`maxi_guarantee`).** Greedy partition (tie_depth 0) after `56+4-21=39` misses 508 equations (416 at tie_depth 6). `./maxi_guarantee` walks each opening-feedback bucket and, wherever the greedy subtree would run out of tries, backtracks: other candidate guesses first, then any pool equation (normal mode). Each node where it departs from greedy is written as an override; `data/maxi_guarantee_overrides.tsv` (460 lines, all at guess 5) is the result for the committed pool.
+
+```bash
+make maxi_guarantee
+./maxi_guarantee --overrides data/maxi_guarantee_overrides.tsv   # search (~1.5 min, 4 threads)
+./maxi_guarantee --verify data/maxi_guarantee_overrides.tsv      # independent replay of every secret
+```
+
+| Policy | Mean guesses | 1 | 2 | 3 | 4 | 5 | 6 | fail in 6 |
+|--------|-------------|---|---|---|---|---|---|---|
+| greedy + overrides | 3.4481 | 1 | 25028 | 1160996 | 869736 | 42480 | 4134 | **0** |
+
+Override format: `<feedback after guess 1> … <feedback after guess k>` TAB `<guess k+1>`; any node not listed plays greedy (max distinct feedbacks among remaining candidates, lowest pool index on ties). The overrides are tied to this exact pool file and its order — regenerate them after changing `data/equations_10.txt`. Candidate-only play (`--hard-mode`: every guess must be a remaining candidate, stricter than Nerdle's hard mode) cannot be guaranteed with this opening: an exhaustive candidate search leaves 18 buckets (201 equations) unsolved, e.g. `56/7+11=19, 56/7+51=59, …, 56/7+91=99`.
+
 ---
 
 ## Why different games favour different first guesses
