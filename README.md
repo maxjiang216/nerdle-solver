@@ -380,7 +380,7 @@ The **K = 10** (full symbol diversity) winner matches the max‑partition first 
 
 ```bash
 make maxi_guarantee
-./maxi_guarantee --overrides data/maxi_guarantee_overrides.tsv   # search (~15 s, 4 threads)
+./maxi_guarantee --overrides data/maxi_guarantee_overrides.tsv   # search (~3 s, 4 threads with AVX2)
 ./maxi_guarantee --verify data/maxi_guarantee_overrides.tsv      # independent replay of every secret
 ```
 
@@ -398,7 +398,7 @@ Variants (all verified with `--verify`; pass the same `--tries` when verifying):
 | `--tries 5` | **5** | 1,186,025 (56.41%) | 3.4476 |
 | `--max-three --three-sample 20000` (`data/maxi_three_overrides.tsv`) | 6 | **1,241,102 (59.03%)** | 3.4209 |
 
-`--tries 4` was not reached: the search leaves every opening bucket of ~1,100+ secrets unsolved. `--max-three` picks guess 2 to maximize its feedback classes (= secrets solved by guess 3) over the bucket's candidates plus a fixed random pool sample, keeping the tries guarantee; a 2,000 sample gives 57.39% in ~40 s, 20,000 gives 59.03% in ~4.5 min, and the full pool would be ~100× the 20k cost with today's per-pair feedback.
+`--tries 4` was not reached: the search leaves every opening bucket of ~1,100+ secrets unsolved. `--max-three` picks guess 2 to maximize its feedback classes (= secrets solved by guess 3) over the bucket's candidates plus a fixed random pool sample, keeping the tries guarantee; a 2,000 sample gives 57.39%, 20,000 gives 59.03% in ~1 min, and the full pool would be ~100× the 20k cost.
 
 **Smallest guarantee per mode (normal mode: any pool equation may be guessed).** `maxi_guarantee` works for any length (`--pool data/equations_N.txt`); `--opening search` tries openers by partition count and stops at the first that solves every equation within `--tries`, and `--exhaustive` lifts every search limit so that "no opener works" is a proof.
 
@@ -406,8 +406,8 @@ Variants (all verified with `--verify`; pass the same `--tries` when verifying):
 |------|------|----------------|--------|------|---------------------------|
 | Micro (5) | 127 | **4** | `5-1=4` | 2.961 | exhaustive, 3 tries |
 | Mini (6) | 206 | **3** | `28/7=4` | 2.646 | exhaustive, 2 tries |
-| Midi (7) | 6,661 | **4** | `6+25=31` | 3.124 | exhaustive, 3 tries (51 s) |
-| Classic (8) | 17,723 | **4** | `52-34=18` | 3.047 | exhaustive, 3 tries (220 s) |
+| Midi (7) | 6,661 | **4** | `6+25=31` | 3.124 | exhaustive, 3 tries (12 s) |
+| Classic (8) | 17,723 | **4** | `52-34=18` | 3.047 | exhaustive, 3 tries (81 s) |
 | Maxi (10) | 2,102,375 | **≤ 5** | `56+4-21=39` | 3.448 | 4 not found (below) |
 
 ```bash
@@ -417,6 +417,8 @@ Variants (all verified with `--verify`; pass the same `--tries` when verifying):
 ```
 
 "Exhaustive" covers guesses from the pool file only; the game also accepts some equations the pool excludes as answers (e.g. lone zeros), which could only help. Maxi in 4 after `56+4-21=39`: in the largest bucket (3,614) the best sampled guess 2 leaves classes of 105, 68, 62, … that no single pool equation separates — mostly bracket placements of one equation (`18-(7*2)=4`, `18-(2*7)=4`, `18-(2)*7=4`, …), so a pool without pointless brackets is the first thing to try.
+
+**Batched feedback (`src/feedback_batch.hpp`).** Search loops score one guess against many secrets, so secrets are stored tile-major in blocks of 32 and one guess tile is compared against 32 secrets per vector instruction (AVX2, chosen at run time; ~3.5 ns per pair vs ~30 ns for `compute_feedback_packed`). CPUs without AVX2, and non-x86 builds, fall back to the per-pair routine with identical results; `NERDLE_NO_BATCH=1` forces the fallback for testing. Used by `maxi_guarantee` and `maxi_first_partition_sweep` (4-symbol rung: 6.5 s → 1.2 s).
 
 ---
 

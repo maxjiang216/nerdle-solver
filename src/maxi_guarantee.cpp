@@ -22,6 +22,7 @@
  * where feedbacks are G/P/B strings (the path from the root to the node, excluding the node's own
  * guess) and <guess> is the equation to play there (UTF-8 ²/³).
  */
+#include "feedback_batch.hpp"
 #include "nerdle_core.hpp"
 
 #include <algorithm>
@@ -99,6 +100,15 @@ class Searcher {
           stamp_(static_cast<size_t>(nerdle::pow3_table(N)), 0),
           cnt_(static_cast<size_t>(nerdle::pow3_table(N)), 0) {}
 
+    /** Codes of g against every secret in T (codes_[i] for the i-th secret). */
+    const uint16_t* codes_of(int g, const nerdle::TransposedSecrets& T) {
+        const size_t need = T.blocks() * nerdle::TransposedSecrets::kLanes;
+        if (codes_.size() < need)
+            codes_.resize(need);
+        nerdle::feedback_all(eqs_[static_cast<size_t>(g)].c_str(), T, codes_.data());
+        return codes_.data();
+    }
+
     std::vector<Override> overrides;
     long long pool_scans = 0;
     std::vector<int> pool_sample; /* sorted; empty = --max-three scans the whole pool */
@@ -115,10 +125,11 @@ class Searcher {
             return false;
 
         /* Score every remaining candidate; greedy = max partitions, lowest index on ties. */
+        const nerdle::TransposedSecrets T(eqs_, S, N);
         std::vector<Scored> cands;
         cands.reserve(S.size());
         for (int g : S)
-            cands.push_back(score(g, S));
+            cands.push_back(score(g, T));
         int greedy = cands[0].g;
         int greedy_parts = cands[0].parts;
         for (const Scored& c : cands) {
@@ -155,7 +166,7 @@ class Searcher {
         if (k == 2) {
             /* Last decision: any guess that separates every secret wins, so take the first one. */
             for (int g = 0; g < n; g++)
-                if (separates(g, S))
+                if (separates(g, T))
                     return try_guess(S, k, g, greedy, path);
             return false;
         }
@@ -163,7 +174,7 @@ class Searcher {
         std::vector<Scored> best;
         best.reserve(std::min(static_cast<size_t>(opt_.pool_limit), eqs_.size()) + 1);
         for (int g = 0; g < n; g++) {
-            Scored c = score(g, S);
+            Scored c = score(g, T);
             if (!can_work(c, S, k))
                 continue;
             if (static_cast<int>(best.size()) < opt_.pool_limit || better(c, best.back())) {
@@ -192,6 +203,9 @@ class Searcher {
                        int* classes) {
         const int n = static_cast<int>(eqs_.size());
         const int m = static_cast<int>(S.size());
+        const nerdle::TransposedSecrets T(eqs_, S, N);
+        if (codes_.size() < static_cast<size_t>(nerdle::TransposedSecrets::kLanes))
+            codes_.resize(nerdle::TransposedSecrets::kLanes);
         std::vector<std::pair<int, int>> top; /* (classes, guess), best first */
         auto bar = [&]() { return static_cast<int>(top.size()) < top_n ? 0 : top.back().first; };
         /* Remaining candidates first (they also win outright on all-green), then the pool or
@@ -212,16 +226,20 @@ class Searcher {
             ++epoch_;
             int parts = 0, need_beat = bar();
             bool dropped = false;
-            for (int i = 0; i < m; i++) {
-                uint32_t c = fb(g, S[static_cast<size_t>(i)]);
-                if (stamp_[c] != epoch_) {
-                    stamp_[c] = epoch_;
-                    parts++;
+            const char* gs = eqs_[static_cast<size_t>(g)].c_str();
+            for (size_t b = 0; b < T.blocks() && !dropped; b++) {
+                nerdle::feedback_blocks(gs, T, b, b + 1, codes_.data());
+                const int base = static_cast<int>(b) * nerdle::TransposedSecrets::kLanes;
+                const int lanes = std::min(nerdle::TransposedSecrets::kLanes, m - base);
+                for (int l = 0; l < lanes; l++) {
+                    const uint16_t c = codes_[static_cast<size_t>(l)];
+                    if (stamp_[c] != epoch_) {
+                        stamp_[c] = epoch_;
+                        parts++;
+                    }
                 }
-                if (parts + (m - 1 - i) <= need_beat) {
+                if (parts + (m - base - lanes) <= need_beat)
                     dropped = true;
-                    break;
-                }
             }
             if (dropped)
                 continue;
@@ -234,7 +252,7 @@ class Searcher {
         /* Greedy's own pick needs no override line. */
         int greedy = S[0], greedy_parts = -1;
         for (int c : S) {
-            int p = score(c, S).parts;
+            int p = score(c, T).parts;
             if (p > greedy_parts) {
                 greedy_parts = p;
                 greedy = c;
@@ -262,6 +280,7 @@ class Searcher {
     uint32_t green_;
     std::vector<int> stamp_;
     std::vector<int> cnt_;
+    std::vector<uint16_t> codes_; /* feedback scratch for the batched routines */
     int epoch_ = 0;
 
     static bool better(const Scored& a, const Scored& b) {
@@ -279,12 +298,13 @@ class Searcher {
                                                eqs_[static_cast<size_t>(s)].c_str(), N);
     }
 
-    Scored score(int g, const std::vector<int>& S) {
+    Scored score(int g, const nerdle::TransposedSecrets& T) {
+        const uint16_t* codes = codes_of(g, T);
         ++epoch_;
         int parts = 0, maxc = 0;
         bool in_s = false;
-        for (int s : S) {
-            uint32_t c = fb(g, s);
+        for (size_t i = 0; i < T.size(); i++) {
+            const uint32_t c = codes[i];
             if (c == green_) {
                 in_s = true;
                 continue; /* solved by this guess; not a remaining child */
@@ -300,13 +320,21 @@ class Searcher {
     }
 
     /** True if g gives every secret in S a different feedback (stops at the first clash). */
-    bool separates(int g, const std::vector<int>& S) {
+    bool separates(int g, const nerdle::TransposedSecrets& T) {
+        if (codes_.size() < static_cast<size_t>(nerdle::TransposedSecrets::kLanes))
+            codes_.resize(nerdle::TransposedSecrets::kLanes);
+        const char* gs = eqs_[static_cast<size_t>(g)].c_str();
         ++epoch_;
-        for (int s : S) {
-            uint32_t c = fb(g, s);
-            if (stamp_[c] == epoch_)
-                return false;
-            stamp_[c] = epoch_;
+        for (size_t b = 0; b < T.blocks(); b++) {
+            nerdle::feedback_blocks(gs, T, b, b + 1, codes_.data());
+            const size_t base = b * nerdle::TransposedSecrets::kLanes;
+            const size_t lanes = std::min<size_t>(nerdle::TransposedSecrets::kLanes, T.size() - base);
+            for (size_t l = 0; l < lanes; l++) {
+                const uint16_t c = codes_[l];
+                if (stamp_[c] == epoch_)
+                    return false;
+                stamp_[c] = epoch_;
+            }
         }
         return true;
     }
@@ -623,19 +651,22 @@ int main(int argc, char** argv) {
     if (opening == "search") {
         /* Openers by partition count (most buckets first); the first that solves everything wins. */
         std::vector<std::pair<int, int>> order(static_cast<size_t>(n));
+        nerdle::TransposedSecrets all;
+        all.assign_all(eqs, N);
 #ifdef _OPENMP
 #pragma omp parallel
 #endif
         {
             std::vector<int> stamp(static_cast<size_t>(nerdle::pow3_table(N)), -1);
+            std::vector<uint16_t> codes(all.blocks() * nerdle::TransposedSecrets::kLanes);
 #ifdef _OPENMP
 #pragma omp for schedule(dynamic, 64)
 #endif
             for (int g = 0; g < n; g++) {
                 int parts = 0;
+                nerdle::feedback_all(eqs[static_cast<size_t>(g)].c_str(), all, codes.data());
                 for (int s = 0; s < n; s++) {
-                    uint32_t c = nerdle::compute_feedback_packed(eqs[static_cast<size_t>(g)].c_str(),
-                                                                 eqs[static_cast<size_t>(s)].c_str(), N);
+                    const uint16_t c = codes[static_cast<size_t>(s)];
                     if (stamp[c] != g) {
                         stamp[c] = g;
                         parts++;
