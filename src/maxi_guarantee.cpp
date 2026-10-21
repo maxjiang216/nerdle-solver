@@ -1,15 +1,17 @@
 /**
- * Search for a Maxi (10-tile, 6-try) strategy that solves every equation in the pool.
+ * Search for a Nerdle strategy that solves every equation in the pool within --tries guesses
+ * (any tile count; defaults are Maxi: data/equations_10.txt, 6 tries).
  *
- * Policy: fixed opening, then greedy partition (max distinct feedbacks among the remaining
+ * Policy: fixed opening (or, with --opening search, the first opener by partition count that
+ * works), then greedy partition (max distinct feedbacks among the remaining
  * candidates, ties → lowest pool index — the same rule as partition tie_depth=0). Wherever that
  * greedy subtree fails to finish within the remaining tries, backtrack: try other candidate
  * guesses (best partition first), then, if allowed, any equation from the full pool (normal mode;
  * the guess need not be a remaining candidate). Every node where the chosen guess differs from the
  * greedy pick is written as an override, so "greedy + overrides" reproduces the strategy.
  *
- * Usage: ./maxi_guarantee [--pool data/equations_10.txt] [--opening 56+4-21=39] [--tries 6]
- *          [--greedy-only] [--hard-mode] [--cand-limit 64] [--pool-limit 40]
+ * Usage: ./maxi_guarantee [--pool data/equations_10.txt] [--opening EQ | search [--openers K]] [--tries 6]
+ *          [--greedy-only] [--hard-mode] [--exhaustive] [--cand-limit 64] [--pool-limit 40]
  *          [--pool-scan-max 400] [--max-three [--three-sample N]] [--overrides PATH] [--verify PATH] [--threads T]
  *
  * --max-three: guess 2 maximizes the secrets solved by guess 3 (its feedback classes, over the
@@ -42,7 +44,7 @@
 
 namespace {
 
-constexpr int N = 10;
+int N = 10; /* tiles per equation; set from the pool in main */
 
 std::string normalize_maxi_tiles(const std::string& s) {
     std::string out;
@@ -82,6 +84,7 @@ struct Options {
     int pool_scan_max = 400;   /* only scan the full pool for nodes with at most this many secrets */
     bool max_three = false;    /* guess 2: maximize secrets solved by guess 3 (any pool equation) */
     int three_sample = 0;      /* --max-three: score this many random pool equations (0 = all) */
+    bool stop_on_fail = false; /* opener search: give up on an opener at its first unsolved bucket */
 };
 
 struct Override {
@@ -158,7 +161,7 @@ class Searcher {
         }
         /* Otherwise keep the best pool_limit by score. */
         std::vector<Scored> best;
-        best.reserve(static_cast<size_t>(opt_.pool_limit) + 1);
+        best.reserve(std::min(static_cast<size_t>(opt_.pool_limit), eqs_.size()) + 1);
         for (int g = 0; g < n; g++) {
             Scored c = score(g, S);
             if (!can_work(c, S, k))
@@ -444,7 +447,8 @@ class Verifier {
 
 int main(int argc, char** argv) {
     std::string path = "data/equations_10.txt";
-    std::string opening = nerdle::kMaxiPartitionFixedOpening;
+    std::string opening; /* default: the partition opening for this length */
+    int max_openers = 0; /* --opening search: try this many openers (0 = all) */
     std::string overrides_path;
     std::string verify_path;
     int tries = 6;
@@ -472,7 +476,12 @@ int main(int argc, char** argv) {
             opt.pool_limit = std::atoi(next().c_str());
         else if (a == "--pool-scan-max")
             opt.pool_scan_max = std::atoi(next().c_str());
-        else if (a == "--overrides")
+        else if (a == "--openers")
+            max_openers = std::atoi(next().c_str());
+        else if (a == "--exhaustive") {
+            /* every candidate and every pool equation at every node: a failure is then a proof */
+            opt.cand_limit = opt.pool_limit = opt.pool_scan_max = 1 << 30;
+        } else if (a == "--overrides")
             overrides_path = next();
         else if (a == "--verify")
             verify_path = next();
@@ -498,39 +507,191 @@ int main(int argc, char** argv) {
             if (!line.empty())
                 eqs.push_back(normalize_maxi_tiles(line));
     }
-    const std::string want = normalize_maxi_tiles(opening);
-    int open_idx = -1;
-    for (size_t i = 0; i < eqs.size(); i++) {
-        if (static_cast<int>(eqs[i].size()) != N) {
-            std::cerr << "Not a 10-tile pool: " << maxi_display(eqs[i]) << "\n";
+    if (eqs.empty()) {
+        std::cerr << "Empty pool\n";
+        return 1;
+    }
+    N = static_cast<int>(eqs[0].size());
+    for (const std::string& e : eqs) {
+        if (static_cast<int>(e.size()) != N || N > 10) {
+            std::cerr << "Pool rows must all have the same length (at most 10 tiles)\n";
             return 1;
         }
-        if (eqs[i] == want)
-            open_idx = static_cast<int>(i);
     }
+    const int n = static_cast<int>(eqs.size());
+    const uint32_t green = nerdle::all_green_packed(N);
+
+    /* Bucket every secret by an opening's feedback; buckets largest first. */
+    std::vector<std::vector<int>> by_code(static_cast<size_t>(nerdle::pow3_table(N)));
+    std::vector<uint32_t> codes;
+    auto bucketize = [&](int open_idx) {
+        for (uint32_t c : codes)
+            by_code[c].clear();
+        codes.clear();
+        for (int s = 0; s < n; s++) {
+            uint32_t c = nerdle::compute_feedback_packed(eqs[static_cast<size_t>(open_idx)].c_str(),
+                                                         eqs[static_cast<size_t>(s)].c_str(), N);
+            if (c == green)
+                continue;
+            if (by_code[c].empty())
+                codes.push_back(c);
+            by_code[c].push_back(s);
+        }
+        std::sort(codes.begin(), codes.end(), [&](uint32_t a, uint32_t b) {
+            return by_code[a].size() != by_code[b].size() ? by_code[a].size() > by_code[b].size()
+                                                          : a < b;
+        });
+    };
+
+    struct RunResult {
+        long long unsolved_buckets = 0, unsolved_secrets = 0, overrides = 0, pool_scans = 0,
+                  by_three = 0;
+        std::vector<std::vector<Override>> bucket_overrides;
+    };
+    /* Solve every bucket of the current opening (bucketize first). */
+    auto run_opening = [&](bool log) {
+        RunResult r;
+        std::vector<char> ok(codes.size(), 0);
+        r.bucket_overrides.assign(codes.size(), {});
+        std::atomic<long long> done{0}, pool_scans{0}, by_three{0};
+        std::atomic<bool> abort{false};
+        const auto t0 = std::chrono::steady_clock::now();
+        std::mutex log_mu;
+#ifdef _OPENMP
+#pragma omp parallel
+#endif
+        {
+            Searcher srch(eqs, opt);
+            if (opt.three_sample > 0) {
+                std::mt19937 rng(12345); /* same sample in every thread and run */
+                std::vector<int> all(eqs.size());
+                for (size_t i = 0; i < all.size(); i++)
+                    all[i] = static_cast<int>(i);
+                std::shuffle(all.begin(), all.end(), rng);
+                all.resize(std::min(all.size(), static_cast<size_t>(opt.three_sample)));
+                std::sort(all.begin(), all.end());
+                srch.pool_sample = std::move(all);
+            }
+#ifdef _OPENMP
+#pragma omp for schedule(dynamic, 1)
+#endif
+            for (int b = 0; b < static_cast<int>(codes.size()); b++) {
+                if (abort.load(std::memory_order_relaxed))
+                    continue;
+                srch.overrides.clear();
+                long long scans_before = srch.pool_scans;
+                std::vector<uint32_t> p{codes[static_cast<size_t>(b)]};
+                const std::vector<int>& S = by_code[codes[static_cast<size_t>(b)]];
+                if (opt.max_three) {
+                    int classes = 0;
+                    ok[static_cast<size_t>(b)] = srch.best_for_three(S, tries - 1, 16, p, &classes) >= 0;
+                    by_three += classes;
+                } else {
+                    ok[static_cast<size_t>(b)] = srch.solve(S, tries - 1, p);
+                }
+                if (!ok[static_cast<size_t>(b)] && opt.stop_on_fail)
+                    abort = true;
+                r.bucket_overrides[static_cast<size_t>(b)] = srch.overrides;
+                pool_scans += srch.pool_scans - scans_before;
+                long long d = ++done;
+                if (log && (!ok[static_cast<size_t>(b)] || d % 2500 == 0)) {
+                    std::lock_guard<std::mutex> lk(log_mu);
+                    double el =
+                        std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
+                    if (!ok[static_cast<size_t>(b)])
+                        std::cerr << "  UNSOLVED bucket "
+                                  << nerdle::feedback_packed_to_string(codes[static_cast<size_t>(b)], N)
+                                  << " size " << S.size() << "\n";
+                    if (d % 2500 == 0)
+                        std::cerr << "  [progress] " << d << "/" << codes.size() << " buckets, " << el
+                                  << " s, pool scans " << pool_scans.load() << "\n";
+                }
+            }
+        }
+        for (size_t b = 0; b < codes.size(); b++) {
+            if (!ok[b]) {
+                r.unsolved_buckets++;
+                r.unsolved_secrets += static_cast<long long>(by_code[codes[b]].size());
+            }
+            r.overrides += static_cast<long long>(r.bucket_overrides[b].size());
+        }
+        r.pool_scans = pool_scans.load();
+        r.by_three = by_three.load();
+        return r;
+    };
+
+    if (opening == "search") {
+        /* Openers by partition count (most buckets first); the first that solves everything wins. */
+        std::vector<std::pair<int, int>> order(static_cast<size_t>(n));
+#ifdef _OPENMP
+#pragma omp parallel
+#endif
+        {
+            std::vector<int> stamp(static_cast<size_t>(nerdle::pow3_table(N)), -1);
+#ifdef _OPENMP
+#pragma omp for schedule(dynamic, 64)
+#endif
+            for (int g = 0; g < n; g++) {
+                int parts = 0;
+                for (int s = 0; s < n; s++) {
+                    uint32_t c = nerdle::compute_feedback_packed(eqs[static_cast<size_t>(g)].c_str(),
+                                                                 eqs[static_cast<size_t>(s)].c_str(), N);
+                    if (stamp[c] != g) {
+                        stamp[c] = g;
+                        parts++;
+                    }
+                }
+                order[static_cast<size_t>(g)] = {-parts, g};
+            }
+        }
+        std::sort(order.begin(), order.end());
+        const int limit = (max_openers > 0) ? std::min(max_openers, n) : n;
+        opt.stop_on_fail = true;
+        const auto t0 = std::chrono::steady_clock::now();
+        for (int i = 0; i < limit; i++) {
+            const int g = order[static_cast<size_t>(i)].second;
+            bucketize(g);
+            RunResult r = run_opening(false);
+            if (r.unsolved_buckets == 0) {
+                std::cout << "Opener " << maxi_display(eqs[static_cast<size_t>(g)]) << " ("
+                          << -order[static_cast<size_t>(i)].first << " partitions, rank " << i + 1
+                          << ") solves all " << n << " within " << tries << "  ["
+                          << std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count()
+                          << " s]\n";
+                return 0;
+            }
+        }
+        std::cout << "No opener among the top " << limit << " of " << n << " solves all within "
+                  << tries
+                  << ((limit == n && opt.pool_limit >= n && opt.cand_limit >= n && opt.pool_scan_max >= n)
+                          ? "  (exhaustive: no pool-equation strategy exists)"
+                          : "  (search limits apply: not a proof)")
+                  << "  ["
+                  << std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count()
+                  << " s]\n";
+        return 2;
+    }
+
+    if (opening.empty()) {
+        const char* def = nerdle::partition_fixed_opening_tie6(N);
+        if (!def) {
+            std::cerr << "No default opening for length " << N << "; pass --opening\n";
+            return 1;
+        }
+        opening = def;
+    }
+    const std::string want = normalize_maxi_tiles(opening);
+    int open_idx = -1;
+    for (int i = 0; i < n; i++)
+        if (eqs[static_cast<size_t>(i)] == want)
+            open_idx = i;
     if (open_idx < 0) {
         std::cerr << "Opening not in pool: " << opening << "\n";
         return 1;
     }
-
-    /* Bucket every secret by the opening's feedback. */
-    const uint32_t green = nerdle::all_green_packed(N);
-    std::vector<std::vector<int>> by_code(static_cast<size_t>(nerdle::pow3_table(N)));
-    for (int s = 0; s < static_cast<int>(eqs.size()); s++) {
-        uint32_t c = nerdle::compute_feedback_packed(eqs[static_cast<size_t>(open_idx)].c_str(),
-                                                     eqs[static_cast<size_t>(s)].c_str(), N);
-        if (c != green)
-            by_code[c].push_back(s);
-    }
-    std::vector<uint32_t> codes;
-    for (uint32_t c = 0; c < by_code.size(); c++)
-        if (!by_code[c].empty())
-            codes.push_back(c);
-    std::sort(codes.begin(), codes.end(), [&](uint32_t a, uint32_t b) {
-        return by_code[a].size() > by_code[b].size();
-    });
-    std::cerr << "Pool " << eqs.size() << ", opening " << maxi_display(want) << ", "
-              << codes.size() << " opening buckets, largest " << by_code[codes[0]].size() << "\n";
+    bucketize(open_idx);
+    std::cerr << "Pool " << n << ", opening " << maxi_display(want) << ", " << codes.size()
+              << " opening buckets, largest " << by_code[codes[0]].size() << "\n";
 
     if (!verify_path.empty()) {
         std::unordered_map<std::string, int> idx_of, over;
@@ -588,82 +749,23 @@ int main(int argc, char** argv) {
         return hist[static_cast<size_t>(tries + 1)] == 0 ? 0 : 2;
     }
 
-    std::vector<char> ok(codes.size(), 0);
-    std::vector<std::vector<Override>> bucket_overrides(codes.size());
-    std::atomic<long long> done{0}, pool_scans{0}, by_three{0};
     const auto t0 = std::chrono::steady_clock::now();
-    std::mutex log_mu;
-
-#ifdef _OPENMP
-#pragma omp parallel
-#endif
-    {
-        Searcher srch(eqs, opt);
-        if (opt.three_sample > 0) {
-            std::mt19937 rng(12345); /* same sample in every thread and run */
-            std::vector<int> all(eqs.size());
-            for (size_t i = 0; i < all.size(); i++)
-                all[i] = static_cast<int>(i);
-            std::shuffle(all.begin(), all.end(), rng);
-            all.resize(std::min(all.size(), static_cast<size_t>(opt.three_sample)));
-            std::sort(all.begin(), all.end());
-            srch.pool_sample = std::move(all);
-        }
-#ifdef _OPENMP
-#pragma omp for schedule(dynamic, 1)
-#endif
-        for (int b = 0; b < static_cast<int>(codes.size()); b++) {
-            srch.overrides.clear();
-            long long scans_before = srch.pool_scans;
-            std::vector<uint32_t> p{codes[static_cast<size_t>(b)]};
-            const std::vector<int>& S = by_code[codes[static_cast<size_t>(b)]];
-            if (opt.max_three) {
-                int classes = 0;
-                ok[static_cast<size_t>(b)] = srch.best_for_three(S, tries - 1, 16, p, &classes) >= 0;
-                by_three += classes;
-            } else {
-                ok[static_cast<size_t>(b)] = srch.solve(S, tries - 1, p);
-            }
-            bucket_overrides[static_cast<size_t>(b)] = srch.overrides;
-            pool_scans += srch.pool_scans - scans_before;
-            long long d = ++done;
-            if (!ok[static_cast<size_t>(b)] || d % 2500 == 0) {
-                std::lock_guard<std::mutex> lk(log_mu);
-                double el = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
-                if (!ok[static_cast<size_t>(b)])
-                    std::cerr << "  UNSOLVED bucket "
-                              << nerdle::feedback_packed_to_string(codes[static_cast<size_t>(b)], N)
-                              << " size " << by_code[codes[static_cast<size_t>(b)]].size() << "\n";
-                if (d % 2500 == 0)
-                    std::cerr << "  [progress] " << d << "/" << codes.size() << " buckets, "
-                              << el << " s, pool scans " << pool_scans.load() << "\n";
-            }
-        }
-    }
-
-    long long unsolved_buckets = 0, unsolved_secrets = 0, n_over = 0;
-    for (size_t b = 0; b < codes.size(); b++) {
-        if (!ok[b]) {
-            unsolved_buckets++;
-            unsolved_secrets += static_cast<long long>(by_code[codes[b]].size());
-        }
-        n_over += static_cast<long long>(bucket_overrides[b].size());
-    }
+    RunResult r = run_opening(true);
     double el = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
     std::cout << "Opening: " << maxi_display(want) << "  tries: " << tries
               << (opt.greedy_only ? "  [greedy only]" : "") << (opt.hard_mode ? "  [hard mode]" : "")
               << "\n"
-              << "Buckets: " << codes.size() << "  unsolved buckets: " << unsolved_buckets
-              << "  (secrets in them: " << unsolved_secrets << ")\n"
-              << (opt.max_three ? "Solved within 3: " + std::to_string(1 + by_three.load()) + "\n"
+              << "Buckets: " << codes.size() << "  unsolved buckets: " << r.unsolved_buckets
+              << "  (secrets in them: " << r.unsolved_secrets << ")\n"
+              << (opt.max_three ? "Solved within 3: " + std::to_string(1 + r.by_three) + "\n"
                                 : std::string())
-              << "Overrides: " << n_over << "  full-pool scans: " << pool_scans.load()
+              << "Overrides: " << r.overrides << "  full-pool scans: " << r.pool_scans
               << "  wall: " << el << " s\n";
 
     if (!overrides_path.empty()) {
         std::ofstream out(overrides_path);
         for (size_t b = 0; b < codes.size(); b++) {
-            for (const Override& o : bucket_overrides[b]) {
+            for (const Override& o : r.bucket_overrides[b]) {
                 for (size_t i = 0; i < o.path.size(); i++)
                     out << (i ? " " : "") << nerdle::feedback_packed_to_string(o.path[i], N);
                 out << "\t" << maxi_display(eqs[static_cast<size_t>(o.guess)]) << "\n";
@@ -671,5 +773,5 @@ int main(int argc, char** argv) {
         }
         std::cout << "Wrote " << overrides_path << "\n";
     }
-    return unsolved_buckets == 0 ? 0 : 2;
+    return r.unsolved_buckets == 0 ? 0 : 2;
 }

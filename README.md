@@ -400,6 +400,24 @@ Variants (all verified with `--verify`; pass the same `--tries` when verifying):
 
 `--tries 4` was not reached: the search leaves every opening bucket of ~1,100+ secrets unsolved. `--max-three` picks guess 2 to maximize its feedback classes (= secrets solved by guess 3) over the bucket's candidates plus a fixed random pool sample, keeping the tries guarantee; a 2,000 sample gives 57.39% in ~40 s, 20,000 gives 59.03% in ~4.5 min, and the full pool would be ~100× the 20k cost with today's per-pair feedback.
 
+**Smallest guarantee per mode (normal mode: any pool equation may be guessed).** `maxi_guarantee` works for any length (`--pool data/equations_N.txt`); `--opening search` tries openers by partition count and stops at the first that solves every equation within `--tries`, and `--exhaustive` lifts every search limit so that "no opener works" is a proof.
+
+| Mode | Pool | Min guaranteed | Opener | Mean | Proof that one fewer fails |
+|------|------|----------------|--------|------|---------------------------|
+| Micro (5) | 127 | **4** | `5-1=4` | 2.961 | exhaustive, 3 tries |
+| Mini (6) | 206 | **3** | `28/7=4` | 2.646 | exhaustive, 2 tries |
+| Midi (7) | 6,661 | **4** | `6+25=31` | 3.124 | exhaustive, 3 tries (51 s) |
+| Classic (8) | 17,723 | **4** | `52-34=18` | 3.047 | exhaustive, 3 tries (220 s) |
+| Maxi (10) | 2,102,375 | **≤ 5** | `56+4-21=39` | 3.448 | 4 not found (below) |
+
+```bash
+./maxi_guarantee --pool data/equations_8.txt --opening search --exhaustive --tries 3   # proof: none
+./maxi_guarantee --pool data/equations_8.txt --opening 52-34=18 --tries 4 --overrides /tmp/c4.tsv
+./maxi_guarantee --pool data/equations_8.txt --opening 52-34=18 --tries 4 --verify /tmp/c4.tsv
+```
+
+"Exhaustive" covers guesses from the pool file only; the game also accepts some equations the pool excludes as answers (e.g. lone zeros), which could only help. Maxi in 4 after `56+4-21=39`: in the largest bucket (3,614) the best sampled guess 2 leaves classes of 105, 68, 62, … that no single pool equation separates — mostly bracket placements of one equation (`18-(7*2)=4`, `18-(2*7)=4`, `18-(2)*7=4`, …), so a pool without pointless brackets is the first thing to try.
+
 ---
 
 ## Why different games favour different first guesses
