@@ -10,7 +10,10 @@
  *
  * Usage: ./maxi_guarantee [--pool data/equations_10.txt] [--opening 56+4-21=39] [--tries 6]
  *          [--greedy-only] [--hard-mode] [--cand-limit 64] [--pool-limit 40]
- *          [--pool-scan-max 400] [--overrides PATH] [--threads T]
+ *          [--pool-scan-max 400] [--max-three [--three-sample N]] [--overrides PATH] [--verify PATH] [--threads T]
+ *
+ * --max-three: guess 2 maximizes the secrets solved by guess 3 (its feedback classes, over the
+ * whole pool) among choices that keep the tries guarantee; later guesses as above.
  *
  * Overrides file: one line per override,
  *   <opening feedback> <feedback after guess 2> ... <TAB> <guess>
@@ -28,6 +31,7 @@
 #include <iostream>
 #include <map>
 #include <mutex>
+#include <random>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -76,6 +80,8 @@ struct Options {
     int cand_limit = 64;       /* candidate guesses tried per node (after greedy) */
     int pool_limit = 40;       /* full-pool guesses tried per node */
     int pool_scan_max = 400;   /* only scan the full pool for nodes with at most this many secrets */
+    bool max_three = false;    /* guess 2: maximize secrets solved by guess 3 (any pool equation) */
+    int three_sample = 0;      /* --max-three: score this many random pool equations (0 = all) */
 };
 
 struct Override {
@@ -92,6 +98,7 @@ class Searcher {
 
     std::vector<Override> overrides;
     long long pool_scans = 0;
+    std::vector<int> pool_sample; /* sorted; empty = --max-three scans the whole pool */
 
     /** True if every secret in S (sorted pool indices) is solved within k more guesses. */
     bool solve(const std::vector<int>& S, int k, std::vector<uint32_t>& path) {
@@ -170,6 +177,73 @@ class Searcher {
                 return true;
         }
         return false;
+    }
+
+    /**
+     * Guess-2 choice that maximizes the number of secrets solved by guess 3 (= distinct feedbacks
+     * of the guess on S, the all-green one included) while every child stays solvable in k-1.
+     * Scans the whole pool; a guess is dropped once it can no longer beat the current top_n.
+     * Returns the chosen guess (-1 if none keeps the guarantee) and its class count in *classes.
+     */
+    int best_for_three(const std::vector<int>& S, int k, int top_n, std::vector<uint32_t>& path,
+                       int* classes) {
+        const int n = static_cast<int>(eqs_.size());
+        const int m = static_cast<int>(S.size());
+        std::vector<std::pair<int, int>> top; /* (classes, guess), best first */
+        auto bar = [&]() { return static_cast<int>(top.size()) < top_n ? 0 : top.back().first; };
+        /* Remaining candidates first (they also win outright on all-green), then the pool or
+         * the fixed pool sample. */
+        std::vector<int> order(S.begin(), S.end());
+        if (pool_sample.empty()) {
+            for (int g = 0; g < n; g++)
+                order.push_back(g);
+        } else {
+            order.insert(order.end(), pool_sample.begin(), pool_sample.end());
+        }
+        for (size_t oi = 0; oi < order.size(); oi++) {
+            const int g = order[oi];
+            if (oi >= S.size() && std::binary_search(S.begin(), S.end(), g))
+                continue;
+            if (static_cast<int>(top.size()) == top_n && top.back().first == m)
+                break; /* top_n perfect splits already: nothing can beat them */
+            ++epoch_;
+            int parts = 0, need_beat = bar();
+            bool dropped = false;
+            for (int i = 0; i < m; i++) {
+                uint32_t c = fb(g, S[static_cast<size_t>(i)]);
+                if (stamp_[c] != epoch_) {
+                    stamp_[c] = epoch_;
+                    parts++;
+                }
+                if (parts + (m - 1 - i) <= need_beat) {
+                    dropped = true;
+                    break;
+                }
+            }
+            if (dropped)
+                continue;
+            auto it = std::find_if(top.begin(), top.end(),
+                                   [&](const std::pair<int, int>& t) { return t.first < parts; });
+            top.insert(it, {parts, g});
+            if (static_cast<int>(top.size()) > top_n)
+                top.pop_back();
+        }
+        /* Greedy's own pick needs no override line. */
+        int greedy = S[0], greedy_parts = -1;
+        for (int c : S) {
+            int p = score(c, S).parts;
+            if (p > greedy_parts) {
+                greedy_parts = p;
+                greedy = c;
+            }
+        }
+        for (const auto& t : top) {
+            if (try_guess(S, k, t.second, greedy, path)) {
+                *classes = t.first;
+                return t.second;
+            }
+        }
+        return -1;
     }
 
   private:
@@ -388,6 +462,10 @@ int main(int argc, char** argv) {
             opt.greedy_only = true;
         else if (a == "--hard-mode")
             opt.hard_mode = true;
+        else if (a == "--max-three")
+            opt.max_three = true;
+        else if (a == "--three-sample")
+            opt.three_sample = std::atoi(next().c_str());
         else if (a == "--cand-limit")
             opt.cand_limit = std::atoi(next().c_str());
         else if (a == "--pool-limit")
@@ -512,7 +590,7 @@ int main(int argc, char** argv) {
 
     std::vector<char> ok(codes.size(), 0);
     std::vector<std::vector<Override>> bucket_overrides(codes.size());
-    std::atomic<long long> done{0}, pool_scans{0};
+    std::atomic<long long> done{0}, pool_scans{0}, by_three{0};
     const auto t0 = std::chrono::steady_clock::now();
     std::mutex log_mu;
 
@@ -521,6 +599,16 @@ int main(int argc, char** argv) {
 #endif
     {
         Searcher srch(eqs, opt);
+        if (opt.three_sample > 0) {
+            std::mt19937 rng(12345); /* same sample in every thread and run */
+            std::vector<int> all(eqs.size());
+            for (size_t i = 0; i < all.size(); i++)
+                all[i] = static_cast<int>(i);
+            std::shuffle(all.begin(), all.end(), rng);
+            all.resize(std::min(all.size(), static_cast<size_t>(opt.three_sample)));
+            std::sort(all.begin(), all.end());
+            srch.pool_sample = std::move(all);
+        }
 #ifdef _OPENMP
 #pragma omp for schedule(dynamic, 1)
 #endif
@@ -528,7 +616,14 @@ int main(int argc, char** argv) {
             srch.overrides.clear();
             long long scans_before = srch.pool_scans;
             std::vector<uint32_t> p{codes[static_cast<size_t>(b)]};
-            ok[static_cast<size_t>(b)] = srch.solve(by_code[codes[static_cast<size_t>(b)]], tries - 1, p);
+            const std::vector<int>& S = by_code[codes[static_cast<size_t>(b)]];
+            if (opt.max_three) {
+                int classes = 0;
+                ok[static_cast<size_t>(b)] = srch.best_for_three(S, tries - 1, 16, p, &classes) >= 0;
+                by_three += classes;
+            } else {
+                ok[static_cast<size_t>(b)] = srch.solve(S, tries - 1, p);
+            }
             bucket_overrides[static_cast<size_t>(b)] = srch.overrides;
             pool_scans += srch.pool_scans - scans_before;
             long long d = ++done;
@@ -560,6 +655,8 @@ int main(int argc, char** argv) {
               << "\n"
               << "Buckets: " << codes.size() << "  unsolved buckets: " << unsolved_buckets
               << "  (secrets in them: " << unsolved_secrets << ")\n"
+              << (opt.max_three ? "Solved within 3: " + std::to_string(1 + by_three.load()) + "\n"
+                                : std::string())
               << "Overrides: " << n_over << "  full-pool scans: " << pool_scans.load()
               << "  wall: " << el << " s\n";
 

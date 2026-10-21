@@ -390,6 +390,16 @@ make maxi_guarantee
 
 Override format: `<feedback after guess 1> … <feedback after guess k>` TAB `<guess k+1>`; any node not listed plays greedy (max distinct feedbacks among remaining candidates, lowest pool index on ties). The overrides are tied to this exact pool file and its order — regenerate them after changing `data/equations_10.txt`. Candidate-only play (`--hard-mode`: every guess must be a remaining candidate, stricter than Nerdle's hard mode) cannot be guaranteed with this opening: an exhaustive candidate search leaves 18 buckets (201 equations) unsolved, e.g. `56/7+11=19, 56/7+51=59, …, 56/7+91=99`.
 
+Variants (all verified with `--verify`; pass the same `--tries` when verifying):
+
+| Run | Guarantee | Solved within 3 | Mean |
+|-----|-----------|-----------------|------|
+| `--tries 6` (default, `data/maxi_guarantee_overrides.tsv`) | 6 | 1,186,025 (56.41%) | 3.4481 |
+| `--tries 5` | **5** | 1,186,025 (56.41%) | 3.4476 |
+| `--max-three --three-sample 20000` (`data/maxi_three_overrides.tsv`) | 6 | **1,241,102 (59.03%)** | 3.4209 |
+
+`--tries 4` was not reached: the search leaves every opening bucket of ~1,100+ secrets unsolved. `--max-three` picks guess 2 to maximize its feedback classes (= secrets solved by guess 3) over the bucket's candidates plus a fixed random pool sample, keeping the tries guarantee; a 2,000 sample gives 57.39% in ~40 s, 20,000 gives 59.03% in ~4.5 min, and the full pool would be ~100× the 20k cost with today's per-pair feedback.
+
 ---
 
 ## Why different games favour different first guesses

@@ -56,6 +56,7 @@ data/*
 !data/equations_8.txt
 !data/equations_10.txt
 !data/maxi_guarantee_overrides.tsv
+!data/maxi_three_overrides.tsv
 /equations_*.txt
 
 # Python
