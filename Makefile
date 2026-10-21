@@ -1,5 +1,10 @@
 # Nerdle solver build
-CXX = g++
+# Prefer Clang when it can build OpenMP code (needs libomp: libomp-dev / `brew install libomp`):
+# its binaries ran 1.05-1.9x faster than GCC's on this repo's tools with identical output.
+# Otherwise fall back to g++. Override with `make CXX=g++` (or any compiler).
+ifeq ($(origin CXX),default)
+CXX := $(shell printf 'int main(){}' | clang++ -fopenmp -x c++ - -o /dev/null >/dev/null 2>&1 && echo clang++ || echo g++)
+endif
 CXXFLAGS = -O3 -std=c++17
 SRCDIR = src
 BINDIR = .

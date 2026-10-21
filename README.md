@@ -274,7 +274,7 @@ Simulates Quad Nerdle over **sampled distinct** quadruples (all 4 equations diff
 
 ## Dependencies
 
-- **C++ compiler with OpenMP** — e.g. `g++` with `-fopenmp`
+- **C++ compiler with OpenMP** — `clang++` with libomp (`apt install libomp-dev`, `brew install libomp`) is preferred; `g++` with `-fopenmp` works too
 - **Node.js** (optional) — `cd web && npm install` to build the browser bundle (`esbuild`)
 
 ---
@@ -282,9 +282,12 @@ Simulates Quad Nerdle over **sampled distinct** quadruples (all 4 equations diff
 ## Build
 
 ```bash
-make              # build all tools
+make -j4          # build all tools (uses clang++ if it can compile OpenMP, else g++)
+make CXX=g++      # force a compiler
 make clean        # remove binaries
 ```
+
+Clang 18 builds ran 1.05–1.9× faster than GCC 13 builds here with identical output (largest gains in per-pair feedback code: `solve` 2.8 → 1.4 s, `partition_report` Maxi tie_depth 6 14.1 → 10.1 s; already-vectorized batched loops gain ~5–10%).
 
 ---
 
