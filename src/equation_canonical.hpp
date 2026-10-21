@@ -24,6 +24,7 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <mutex>
 #include <string>
 #include <vector>
 
@@ -192,8 +193,12 @@ inline std::vector<CanonicalEqKey> compute_canonical_keys(const std::vector<std:
 
 /** Cached keys for the lifetime of a given `eqs` vector object (same address). */
 inline const std::vector<CanonicalEqKey>& canonical_keys_for_pool(const std::vector<std::string>& eqs) {
+    /* Called from OpenMP workers (e.g. bench_nerdle plays games in parallel): without the lock a
+     * thread could see `last` already set and read `cached` while another is still filling it. */
+    static std::mutex mu;
     static const std::vector<std::string>* last = nullptr;
     static std::vector<CanonicalEqKey> cached;
+    std::lock_guard<std::mutex> lock(mu);
     if (&eqs != last) {
         last = &eqs;
         cached = compute_canonical_keys(eqs);

@@ -6,7 +6,13 @@ BINDIR = .
 
 .PHONY: all clean micro_policy mini_policy canonical_tables report_partition_8 report_partition_maxi compare_first_8 list_partition_failures_8 maxi_unique_partition_sample maxi_first_partition_sweep maxi_guarantee maxi_opening_partition_stats browser_partition_data browser_partition_data_web prepare_web_deploy
 
-all: generate generate_maxi solve solve_adaptive solve_binerdle solve_quadnerdle bench_nerdle bench_partition_aggregate bench_entropy_aggregate nerdle nerdle_micro binerdle bench_binerdle quadnerdle bench_quadnerdle optimal_expected optimal_subgame midi_exact compare_subgame_entropy compare_full_restricted_subgame explore_first_guess first_guess_tiered_sim first_guess_recursive_ev first_guess_staged_sample trace_target compare_bellman solver_json compare_first_8 list_partition_failures_8 maxi_unique_partition_sample maxi_first_partition_sweep maxi_guarantee partition_report browser_partition_artifacts
+TOOLS = generate generate_maxi solve solve_adaptive solve_binerdle solve_quadnerdle bench_nerdle bench_partition_aggregate bench_entropy_aggregate nerdle nerdle_micro binerdle bench_binerdle quadnerdle bench_quadnerdle optimal_expected optimal_subgame midi_exact compare_subgame_entropy compare_full_restricted_subgame explore_first_guess first_guess_tiered_sim first_guess_recursive_ev first_guess_staged_sample trace_target compare_bellman solver_json compare_first_8 list_partition_failures_8 maxi_unique_partition_sample maxi_first_partition_sweep maxi_guarantee partition_report browser_partition_artifacts
+
+all: $(TOOLS)
+
+# Headers include each other, so rebuild every tool when any header changes (extra
+# prerequisites only; each recipe still compiles its own .cpp).
+$(TOOLS): $(wildcard $(SRCDIR)/*.hpp)
 
 generate: $(SRCDIR)/generate.cpp $(SRCDIR)/equation_canonical.hpp
 	$(CXX) $(CXXFLAGS) -fopenmp -I$(SRCDIR) -o $(BINDIR)/$@ $(SRCDIR)/generate.cpp

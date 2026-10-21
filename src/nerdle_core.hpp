@@ -23,6 +23,9 @@
 #ifdef _OPENMP
 #include <omp.h>
 #endif
+#if defined(__SSE2__)
+#include <emmintrin.h>
+#endif
 
 namespace nerdle {
 
@@ -31,8 +34,8 @@ inline int pow3_table(int N) {
     return (N >= 0 && N <= 10) ? t[N] : 0;
 }
 
-/** Base-3 pack: trit i = B=0, P=1, G=2 at position i (LSB = position 0). */
-inline uint32_t compute_feedback_packed(const char* guess, const char* solution, int N) {
+/** Reference implementation of compute_feedback_packed (any N up to 16). */
+inline uint32_t compute_feedback_packed_generic(const char* guess, const char* solution, int N) {
     int remaining[256] = {};
     for (int i = 0; i < N; i++)
         remaining[static_cast<unsigned char>(solution[i])]++;
@@ -61,6 +64,62 @@ inline uint32_t compute_feedback_packed(const char* guess, const char* solution,
         mul *= 3U;
     }
     return code;
+}
+
+/**
+ * Branch-free feedback for a compile-time length: greens from one byte compare, then each
+ * non-green guess tile claims the leftmost unclaimed matching non-green solution tile (that is
+ * exactly Nerdle's left-to-right purple rule). Same codes as compute_feedback_packed_generic.
+ */
+template <int N>
+inline uint32_t compute_feedback_packed_n(const char* guess, const char* solution) {
+    static_assert(N >= 1 && N <= 16, "tile count");
+    static constexpr uint32_t p3[16] = {1,       3,       9,        27,       81,      243,
+                                        729,     2187,    6561,     19683,    59049,   177147,
+                                        531441,  1594323, 4782969,  14348907};
+    alignas(16) unsigned char g[16] = {}, s[16] = {};
+    std::memcpy(g, guess, N);
+    std::memcpy(s, solution, N);
+    constexpr uint32_t valid = (1u << N) - 1u;
+#if defined(__SSE2__)
+    const __m128i vs = _mm_load_si128(reinterpret_cast<const __m128i*>(s));
+    const uint32_t green = static_cast<uint32_t>(_mm_movemask_epi8(
+                               _mm_cmpeq_epi8(_mm_load_si128(reinterpret_cast<const __m128i*>(g)), vs))) &
+                           valid;
+#else
+    uint32_t green = 0;
+    for (int i = 0; i < N; i++)
+        green |= static_cast<uint32_t>(g[i] == s[i]) << i;
+#endif
+    uint32_t avail = valid & ~green; /* solution tiles not yet claimed by a green or purple */
+    uint32_t code = 0;
+    for (int i = 0; i < N; i++) {
+        const uint32_t is_green = green >> i & 1u;
+#if defined(__SSE2__)
+        const uint32_t eq = static_cast<uint32_t>(
+            _mm_movemask_epi8(_mm_cmpeq_epi8(_mm_set1_epi8(static_cast<char>(g[i])), vs)));
+#else
+        uint32_t eq = 0;
+        for (int j = 0; j < N; j++)
+            eq |= static_cast<uint32_t>(s[j] == g[i]) << j;
+#endif
+        const uint32_t m = eq & avail & (is_green - 1u); /* a green tile never claims a purple */
+        avail ^= m & (0u - m);
+        code += (2u * is_green + static_cast<uint32_t>(m != 0)) * p3[i];
+    }
+    return code;
+}
+
+/** Base-3 pack: trit i = B=0, P=1, G=2 at position i (LSB = position 0). */
+inline uint32_t compute_feedback_packed(const char* guess, const char* solution, int N) {
+    switch (N) {
+    case 5: return compute_feedback_packed_n<5>(guess, solution);
+    case 6: return compute_feedback_packed_n<6>(guess, solution);
+    case 7: return compute_feedback_packed_n<7>(guess, solution);
+    case 8: return compute_feedback_packed_n<8>(guess, solution);
+    case 10: return compute_feedback_packed_n<10>(guess, solution);
+    default: return compute_feedback_packed_generic(guess, solution, N);
+    }
 }
 
 inline uint32_t compute_feedback_packed(const std::string& guess, const std::string& solution,

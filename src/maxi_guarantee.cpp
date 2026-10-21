@@ -139,11 +139,19 @@ class Searcher {
         if (opt_.hard_mode || static_cast<int>(S.size()) > opt_.pool_scan_max)
             return false;
 
-        /* Normal mode: any equation may be guessed. Keep the best pool_limit by score. */
+        /* Normal mode: any equation may be guessed. */
         pool_scans++;
+        const int n = static_cast<int>(eqs_.size());
+        if (k == 2) {
+            /* Last decision: any guess that separates every secret wins, so take the first one. */
+            for (int g = 0; g < n; g++)
+                if (separates(g, S))
+                    return try_guess(S, k, g, greedy, path);
+            return false;
+        }
+        /* Otherwise keep the best pool_limit by score. */
         std::vector<Scored> best;
         best.reserve(static_cast<size_t>(opt_.pool_limit) + 1);
-        const int n = static_cast<int>(eqs_.size());
         for (int g = 0; g < n; g++) {
             Scored c = score(g, S);
             if (!can_work(c, S, k))
@@ -212,6 +220,18 @@ class Searcher {
             maxc = std::max(maxc, ++cnt_[c]);
         }
         return {g, parts + (in_s ? 1 : 0), maxc, in_s};
+    }
+
+    /** True if g gives every secret in S a different feedback (stops at the first clash). */
+    bool separates(int g, const std::vector<int>& S) {
+        ++epoch_;
+        for (int s : S) {
+            uint32_t c = fb(g, s);
+            if (stamp_[c] == epoch_)
+                return false;
+            stamp_[c] = epoch_;
+        }
+        return true;
     }
 
     /** Cheap necessary condition: with k-1 guesses left after g, every child must fit. */

@@ -380,7 +380,7 @@ The **K = 10** (full symbol diversity) winner matches the max‑partition first 
 
 ```bash
 make maxi_guarantee
-./maxi_guarantee --overrides data/maxi_guarantee_overrides.tsv   # search (~1.5 min, 4 threads)
+./maxi_guarantee --overrides data/maxi_guarantee_overrides.tsv   # search (~15 s, 4 threads)
 ./maxi_guarantee --verify data/maxi_guarantee_overrides.tsv      # independent replay of every secret
 ```
 
