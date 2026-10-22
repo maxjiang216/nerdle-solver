@@ -396,6 +396,8 @@ Exact-aggregate wall time: 34.57156782 s
 
 The **K = 10** (full symbol diversity) winner matches the max‑partition first guess from this repository — `kMaxiPartitionFixedOpening` in `src/partition_greedy.hpp` (`56+4-21=39`) and `./partition_report --pool data/equations_10.txt --tie-depth 6` on the generated pool. So the cascade and the in‑repo partition policy agree at the top level; the table above is the intermediate rungs (K = 4 … 9) only.
 
+See [docs/HANDOFF.md](docs/HANDOFF.md) for what is still open or was blocked (official answers, pool rule questions, unfinished runs).
+
 **Maxi — guaranteed solve in 6 (`maxi_guarantee`).** Greedy partition (tie_depth 0) after `56+4-21=39` misses 508 equations (416 at tie_depth 6). `./maxi_guarantee` walks each opening-feedback bucket and, wherever the greedy subtree would run out of tries, backtracks: other candidate guesses first, then any pool equation (normal mode). Each node where it departs from greedy is written as an override; `data/maxi_guarantee_overrides.tsv` (460 lines, all at guess 5) is the result for the committed pool.
 
 ```bash
