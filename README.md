@@ -247,6 +247,23 @@ The Normal 8 run uses fewer samples because each pair is more expensive; the two
 
 ---
 
+**Guaranteed Binerdle (`binerdle_guarantee`).** Exact search over still-possible answer *pairs* (two different equations, one shared guess per turn, a board is done once guessed exactly). After the opening both boards share the same buckets, so the work splits into independent (bucket i, bucket j) subproblems solved in parallel. `--width 0` (default) tries every pool equation at every node, so "impossible" is a proof; `--width M` tries the M most promising guesses (remaining candidates and strong openers first, then the whole pool) to find strategies faster. Every found strategy is replayed as real games (all pairs for small pools, random pairs otherwise).
+
+| Mode | Pairs | Min guaranteed | Opener | Mean (replay) | One fewer |
+|------|-------|----------------|--------|---------------|-----------|
+| Bi-mini (6) | 42,230 | **5** | `4*7=28` | 3.873 | impossible (exhaustive) |
+| Binerdle (8) | 314,087,006 | **≤ 6** | `52-34=18` | 4.463 (200k sample) | 5 not found at width 20 |
+
+```bash
+./binerdle_guarantee --pool data/equations_6.txt --min
+./binerdle_guarantee --pool data/equations_8.txt --tries 6 --opening 52-34=18 --width 20
+./binerdle_guarantee --pool data/equations_6.txt --single   # cross-check: same search, one board
+```
+
+`--single` reproduces the single-board minimums found by `maxi_guarantee` (Micro 4, Mini 3, Midi 4).
+
+---
+
 ### 8. Quad Nerdle benchmark (`bench_quadnerdle`)
 
 ```bash

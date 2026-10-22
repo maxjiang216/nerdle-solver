@@ -26,6 +26,7 @@ first_guess_tiered_sim
 list_partition_failures_8
 maxi_first_partition_sweep
 maxi_guarantee
+binerdle_guarantee
 maxi_opening_partition_stats
 maxi_unique_partition_sample
 midi_exact
