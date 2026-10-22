@@ -10,6 +10,7 @@
 #ifndef PARTITION_GREEDY_HPP
 #define PARTITION_GREEDY_HPP
 
+#include <algorithm>
 #include <array>
 #include <cstdint>
 #include <string>
@@ -166,12 +167,11 @@ class PartitionGreedyEvaluator {
 
     std::string make_key(const std::vector<int>& state, int k) const {
         std::string key;
-        key.reserve(1 + state.size() * 2);
+        key.reserve(1 + state.size() * 4);
         key.push_back(static_cast<char>(k));
         for (int x : state) {
-            uint16_t y = static_cast<uint16_t>(x);
-            key.push_back(static_cast<char>(y & 0xff));
-            key.push_back(static_cast<char>((y >> 8) & 0xff));
+            uint32_t y = static_cast<uint32_t>(x); /* full width: Maxi pool indices exceed 16 bits */
+            key.append(reinterpret_cast<const char*>(&y), sizeof(y));
         }
         return key;
     }
@@ -233,22 +233,33 @@ class PartitionGreedyEvaluator {
     PartitionSolveDist after_guess(const std::vector<int>& state, int g, int k) {
         PartitionSolveDist out{};
         const double inv = 1.0 / static_cast<double>(state.size());
-        std::vector<std::vector<int>> buckets(static_cast<size_t>(P_));
-        std::vector<int> used_codes;
-        for (int s : state) {
-            int code = static_cast<int>(feedback_code(g, s));
-            if (static_cast<uint32_t>(code) == green_) {
+        /* Group by feedback without a 3^N table of vectors: (code, position) sorted by code keeps
+         * each child in state order; children are then visited in first-appearance order. */
+        std::vector<std::pair<uint32_t, int>> coded;
+        coded.reserve(state.size());
+        for (int i = 0; i < static_cast<int>(state.size()); i++) {
+            uint32_t code = feedback_code(g, state[static_cast<size_t>(i)]);
+            if (code == green_)
                 out.solve_at[1] += inv;
-            } else {
-                std::vector<int>& bucket = buckets[static_cast<size_t>(code)];
-                if (bucket.empty())
-                    used_codes.push_back(code);
-                bucket.push_back(s);
-            }
+            else
+                coded.push_back({code, i});
         }
+        std::sort(coded.begin(), coded.end());
+        std::vector<std::pair<int, std::pair<size_t, size_t>>> ranges; /* first pos, [begin, end) */
+        for (size_t i = 0; i < coded.size();) {
+            size_t j = i;
+            while (j < coded.size() && coded[j].first == coded[i].first)
+                j++;
+            ranges.push_back({coded[i].second, {i, j}});
+            i = j;
+        }
+        std::sort(ranges.begin(), ranges.end());
 
-        for (int code : used_codes) {
-            std::vector<int>& child = buckets[static_cast<size_t>(code)];
+        std::vector<int> child;
+        for (const auto& r : ranges) {
+            child.clear();
+            for (size_t i = r.second.first; i < r.second.second; i++)
+                child.push_back(state[static_cast<size_t>(coded[i].second)]);
             const double weight = static_cast<double>(child.size()) * inv;
             PartitionSolveDist v = solve(child, k - 1);
             for (int t = 2; t <= k && t <= max_tries_; t++)

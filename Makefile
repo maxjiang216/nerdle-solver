@@ -1,12 +1,23 @@
 # Nerdle solver build
-CXX = g++
+# Prefer Clang when it can build OpenMP code (needs libomp: libomp-dev / `brew install libomp`):
+# its binaries ran 1.05-1.9x faster than GCC's on this repo's tools with identical output.
+# Otherwise fall back to g++. Override with `make CXX=g++` (or any compiler).
+ifeq ($(origin CXX),default)
+CXX := $(shell printf 'int main(){}' | clang++ -fopenmp -x c++ - -o /dev/null >/dev/null 2>&1 && echo clang++ || echo g++)
+endif
 CXXFLAGS = -O3 -std=c++17
 SRCDIR = src
 BINDIR = .
 
-.PHONY: all clean micro_policy mini_policy canonical_tables report_partition_8 report_partition_maxi compare_first_8 list_partition_failures_8 maxi_unique_partition_sample maxi_first_partition_sweep maxi_opening_partition_stats browser_partition_data browser_partition_data_web prepare_web_deploy
+.PHONY: all clean micro_policy mini_policy canonical_tables report_partition_8 report_partition_maxi browser_partition_data browser_partition_data_web prepare_web_deploy
 
-all: generate generate_maxi solve solve_adaptive solve_binerdle solve_quadnerdle bench_nerdle bench_partition_aggregate bench_entropy_aggregate nerdle nerdle_micro binerdle bench_binerdle quadnerdle bench_quadnerdle optimal_expected optimal_subgame midi_exact compare_subgame_entropy compare_full_restricted_subgame explore_first_guess first_guess_tiered_sim first_guess_recursive_ev first_guess_staged_sample trace_target compare_bellman solver_json compare_first_8 list_partition_failures_8 maxi_unique_partition_sample maxi_first_partition_sweep partition_report browser_partition_artifacts
+TOOLS = generate generate_maxi solve solve_adaptive solve_binerdle solve_quadnerdle bench_nerdle bench_partition_aggregate bench_entropy_aggregate nerdle nerdle_micro binerdle bench_binerdle quadnerdle bench_quadnerdle optimal_expected optimal_subgame midi_exact compare_subgame_entropy compare_full_restricted_subgame explore_first_guess first_guess_tiered_sim first_guess_recursive_ev first_guess_staged_sample trace_target compare_bellman solver_json compare_first_8 list_partition_failures_8 maxi_unique_partition_sample maxi_first_partition_sweep maxi_guarantee binerdle_guarantee partition_report browser_partition_artifacts
+
+all: $(TOOLS)
+
+# Headers include each other, so rebuild every tool when any header changes (extra
+# prerequisites only; each recipe still compiles its own .cpp).
+$(TOOLS): $(wildcard $(SRCDIR)/*.hpp)
 
 generate: $(SRCDIR)/generate.cpp $(SRCDIR)/equation_canonical.hpp
 	$(CXX) $(CXXFLAGS) -fopenmp -I$(SRCDIR) -o $(BINDIR)/$@ $(SRCDIR)/generate.cpp
@@ -109,6 +120,12 @@ maxi_unique_partition_sample: $(SRCDIR)/maxi_unique_partition_sample.cpp $(SRCDI
 maxi_first_partition_sweep: $(SRCDIR)/maxi_first_partition_sweep.cpp $(SRCDIR)/equation_canonical.hpp $(SRCDIR)/nerdle_core.hpp
 	$(CXX) $(CXXFLAGS) -fopenmp -I$(SRCDIR) -o $(BINDIR)/$@ $(SRCDIR)/maxi_first_partition_sweep.cpp
 
+maxi_guarantee: $(SRCDIR)/maxi_guarantee.cpp $(SRCDIR)/equation_canonical.hpp $(SRCDIR)/nerdle_core.hpp
+	$(CXX) $(CXXFLAGS) -fopenmp -I$(SRCDIR) -o $(BINDIR)/$@ $(SRCDIR)/maxi_guarantee.cpp
+
+binerdle_guarantee: $(SRCDIR)/binerdle_guarantee.cpp $(SRCDIR)/nerdle_core.hpp
+	$(CXX) $(CXXFLAGS) -fopenmp -I$(SRCDIR) -o $(BINDIR)/$@ $(SRCDIR)/binerdle_guarantee.cpp
+
 maxi_opening_partition_stats: $(SRCDIR)/maxi_opening_partition_stats.cpp $(SRCDIR)/nerdle_core.hpp
 	$(CXX) $(CXXFLAGS) -I$(SRCDIR) -o $(BINDIR)/$@ $(SRCDIR)/maxi_opening_partition_stats.cpp
 
@@ -185,5 +202,5 @@ clean:
 	      $(BINDIR)/first_guess_staged_sample $(BINDIR)/trace_target $(BINDIR)/compare_bellman \
 	      $(BINDIR)/solver_json $(BINDIR)/partition_report $(BINDIR)/compare_first_8 \
 	      $(BINDIR)/list_partition_failures_8 $(BINDIR)/maxi_unique_partition_sample \
-	      $(BINDIR)/maxi_first_partition_sweep $(BINDIR)/bench_partition_aggregate \
+	      $(BINDIR)/maxi_first_partition_sweep $(BINDIR)/maxi_guarantee $(BINDIR)/binerdle_guarantee $(BINDIR)/bench_partition_aggregate \
 	      $(BINDIR)/bench_entropy_aggregate $(BINDIR)/browser_partition_artifacts

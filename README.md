@@ -247,6 +247,23 @@ The Normal 8 run uses fewer samples because each pair is more expensive; the two
 
 ---
 
+**Guaranteed Binerdle (`binerdle_guarantee`).** Exact search over still-possible answer *pairs* (two different equations, one shared guess per turn, a board is done once guessed exactly). After the opening both boards share the same buckets, so the work splits into independent (bucket i, bucket j) subproblems solved in parallel. `--width 0` (default) tries every pool equation at every node, so "impossible" is a proof; `--width M` tries the M most promising guesses (remaining candidates and strong openers first, then the whole pool) to find strategies faster. Every found strategy is replayed as real games (all pairs for small pools, random pairs otherwise).
+
+| Mode | Pairs | Min guaranteed | Opener | Mean (replay) | One fewer |
+|------|-------|----------------|--------|---------------|-----------|
+| Bi-mini (6) | 42,230 | **5** | `4*7=28` | 3.873 | impossible (exhaustive) |
+| Binerdle (8) | 314,087,006 | **≤ 6** | `52-34=18` | 4.463 (200k sample) | 5 not found at width 20 |
+
+```bash
+./binerdle_guarantee --pool data/equations_6.txt --min
+./binerdle_guarantee --pool data/equations_8.txt --tries 6 --opening 52-34=18 --width 20
+./binerdle_guarantee --pool data/equations_6.txt --single   # cross-check: same search, one board
+```
+
+`--single` reproduces the single-board minimums found by `maxi_guarantee` (Micro 4, Mini 3, Midi 4).
+
+---
+
 ### 8. Quad Nerdle benchmark (`bench_quadnerdle`)
 
 ```bash
@@ -274,7 +291,7 @@ Simulates Quad Nerdle over **sampled distinct** quadruples (all 4 equations diff
 
 ## Dependencies
 
-- **C++ compiler with OpenMP** — e.g. `g++` with `-fopenmp`
+- **C++ compiler with OpenMP** — `clang++` with libomp (`apt install libomp-dev`, `brew install libomp`) is preferred; `g++` with `-fopenmp` works too
 - **Node.js** (optional) — `cd web && npm install` to build the browser bundle (`esbuild`)
 
 ---
@@ -282,9 +299,12 @@ Simulates Quad Nerdle over **sampled distinct** quadruples (all 4 equations diff
 ## Build
 
 ```bash
-make              # build all tools
+make -j4          # build all tools (uses clang++ if it can compile OpenMP, else g++)
+make CXX=g++      # force a compiler
 make clean        # remove binaries
 ```
+
+Clang 18 builds ran 1.05–1.9× faster than GCC 13 builds here with identical output (largest gains in per-pair feedback code: `solve` 2.8 → 1.4 s, `partition_report` Maxi tie_depth 6 14.1 → 10.1 s; already-vectorized batched loops gain ~5–10%).
 
 ---
 
@@ -375,6 +395,52 @@ Exact-aggregate wall time: 34.57156782 s
 | 9 | 21678 | `48+2-14=36` |
 
 The **K = 10** (full symbol diversity) winner matches the max‑partition first guess from this repository — `kMaxiPartitionFixedOpening` in `src/partition_greedy.hpp` (`56+4-21=39`) and `./partition_report --pool data/equations_10.txt --tie-depth 6` on the generated pool. So the cascade and the in‑repo partition policy agree at the top level; the table above is the intermediate rungs (K = 4 … 9) only.
+
+See [docs/HANDOFF.md](docs/HANDOFF.md) for what is still open or was blocked (official answers, pool rule questions, unfinished runs).
+
+**Maxi — guaranteed solve in 6 (`maxi_guarantee`).** Greedy partition (tie_depth 0) after `56+4-21=39` misses 508 equations (416 at tie_depth 6). `./maxi_guarantee` walks each opening-feedback bucket and, wherever the greedy subtree would run out of tries, backtracks: other candidate guesses first, then any pool equation (normal mode). Each node where it departs from greedy is written as an override; `data/maxi_guarantee_overrides.tsv` (460 lines, all at guess 5) is the result for the committed pool.
+
+```bash
+make maxi_guarantee
+./maxi_guarantee --overrides data/maxi_guarantee_overrides.tsv   # search (~3 s, 4 threads with AVX2)
+./maxi_guarantee --verify data/maxi_guarantee_overrides.tsv      # independent replay of every secret
+```
+
+| Policy | Mean guesses | 1 | 2 | 3 | 4 | 5 | 6 | fail in 6 |
+|--------|-------------|---|---|---|---|---|---|---|
+| greedy + overrides | 3.4481 | 1 | 25028 | 1160996 | 869736 | 42480 | 4134 | **0** |
+
+Override format: `<feedback after guess 1> … <feedback after guess k>` TAB `<guess k+1>`; any node not listed plays greedy (max distinct feedbacks among remaining candidates, lowest pool index on ties). The overrides are tied to this exact pool file and its order — regenerate them after changing `data/equations_10.txt`. Candidate-only play (`--hard-mode`: every guess must be a remaining candidate, stricter than Nerdle's hard mode) cannot be guaranteed with this opening: an exhaustive candidate search leaves 18 buckets (201 equations) unsolved, e.g. `56/7+11=19, 56/7+51=59, …, 56/7+91=99`.
+
+Variants (all verified with `--verify`; pass the same `--tries` when verifying):
+
+| Run | Guarantee | Solved within 3 | Mean |
+|-----|-----------|-----------------|------|
+| `--tries 6` (default, `data/maxi_guarantee_overrides.tsv`) | 6 | 1,186,025 (56.41%) | 3.4481 |
+| `--tries 5` | **5** | 1,186,025 (56.41%) | 3.4476 |
+| `--max-three --three-sample 20000` (`data/maxi_three_overrides.tsv`) | 6 | **1,241,102 (59.03%)** | 3.4209 |
+
+`--tries 4` was not reached: the search leaves every opening bucket of ~1,100+ secrets unsolved. `--max-three` picks guess 2 to maximize its feedback classes (= secrets solved by guess 3) over the bucket's candidates plus a fixed random pool sample, keeping the tries guarantee; a 2,000 sample gives 57.39%, 20,000 gives 59.03% in ~1 min, and the full pool would be ~100× the 20k cost.
+
+**Smallest guarantee per mode (normal mode: any pool equation may be guessed).** `maxi_guarantee` works for any length (`--pool data/equations_N.txt`); `--opening search` tries openers by partition count and stops at the first that solves every equation within `--tries`, and `--exhaustive` lifts every search limit so that "no opener works" is a proof.
+
+| Mode | Pool | Min guaranteed | Opener | Mean | Proof that one fewer fails |
+|------|------|----------------|--------|------|---------------------------|
+| Micro (5) | 127 | **4** | `5-1=4` | 2.961 | exhaustive, 3 tries |
+| Mini (6) | 206 | **3** | `28/7=4` | 2.646 | exhaustive, 2 tries |
+| Midi (7) | 6,661 | **4** | `6+25=31` | 3.124 | exhaustive, 3 tries (12 s) |
+| Classic (8) | 17,723 | **4** | `52-34=18` | 3.047 | exhaustive, 3 tries (81 s) |
+| Maxi (10) | 2,102,375 | **≤ 5** | `56+4-21=39` | 3.448 | 4 not found (below) |
+
+```bash
+./maxi_guarantee --pool data/equations_8.txt --opening search --exhaustive --tries 3   # proof: none
+./maxi_guarantee --pool data/equations_8.txt --opening 52-34=18 --tries 4 --overrides /tmp/c4.tsv
+./maxi_guarantee --pool data/equations_8.txt --opening 52-34=18 --tries 4 --verify /tmp/c4.tsv
+```
+
+"Exhaustive" covers guesses from the pool file only; the game also accepts some equations the pool excludes as answers (e.g. lone zeros), which could only help. Maxi in 4 after `56+4-21=39`: in the largest bucket (3,614) the best sampled guess 2 leaves classes of 105, 68, 62, … that no single pool equation separates — mostly bracket placements of one equation (`18-(7*2)=4`, `18-(2*7)=4`, `18-(2)*7=4`, …), so a pool without pointless brackets is the first thing to try. Follow-up: with a cleaned answer pool, `--guesses` (full guess list) and `--cores` (unseparable-core learning), two buckets of `56+4-21=39` are **proven** to have no 3-guess finish, so that opening cannot guarantee 4. See [docs/MAXI_FOUR_GUESSES.md](docs/MAXI_FOUR_GUESSES.md).
+
+**Batched feedback (`src/feedback_batch.hpp`).** Search loops score one guess against many secrets, so secrets are stored tile-major in blocks of 32 and one guess tile is compared against 32 secrets per vector instruction (AVX2, chosen at run time; ~3.5 ns per pair vs ~30 ns for `compute_feedback_packed`). CPUs without AVX2, and non-x86 builds, fall back to the per-pair routine with identical results; `NERDLE_NO_BATCH=1` forces the fallback for testing. Used by `maxi_guarantee` and `maxi_first_partition_sweep` (4-symbol rung: 6.5 s → 1.2 s).
 
 ---
 

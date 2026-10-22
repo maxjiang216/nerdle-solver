@@ -8,6 +8,7 @@
  * Default mode sweeps all 10-distinct-symbol equations, which is the practical
  * "likely best first guesses" set identified by sampling.
  */
+#include "feedback_batch.hpp"
 #include "nerdle_core.hpp"
 
 #include <algorithm>
@@ -75,16 +76,22 @@ int distinct_symbols(const std::string& s) {
     return count;
 }
 
-GuessStats score_guess_reusing_buffers(const std::vector<std::string>& eqs, int N, int guess_idx,
+GuessStats score_guess_reusing_buffers(const std::vector<std::string>& eqs,
+                                       const nerdle::TransposedSecrets& pool_t, int guess_idx,
                                        std::vector<int>& counts, std::vector<int>& touched) {
     touched.clear();
     const char* g = eqs[static_cast<size_t>(guess_idx)].c_str();
-    for (const std::string& s : eqs) {
-        const uint32_t code = nerdle::compute_feedback_packed(g, s.c_str(), N);
-        int& c = counts[static_cast<size_t>(code)];
-        if (c == 0)
-            touched.push_back(static_cast<int>(code));
-        c++;
+    uint16_t block[nerdle::TransposedSecrets::kLanes];
+    for (size_t b = 0; b < pool_t.blocks(); b++) {
+        nerdle::feedback_blocks(g, pool_t, b, b + 1, block);
+        const size_t base = b * nerdle::TransposedSecrets::kLanes;
+        const size_t lanes = std::min<size_t>(nerdle::TransposedSecrets::kLanes, pool_t.size() - base);
+        for (size_t l = 0; l < lanes; l++) {
+            int& c = counts[block[l]];
+            if (c == 0)
+                touched.push_back(static_cast<int>(block[l]));
+            c++;
+        }
     }
 
     GuessStats out;
@@ -294,6 +301,9 @@ int main(int argc, char** argv) {
     std::filesystem::create_directories(out_dir);
     write_progress_snapshot(progress_file, min_distinct, max_distinct, 0, static_cast<int>(candidates.size()), 0.0);
 
+    nerdle::TransposedSecrets pool_t; /* whole pool, tile-major, for batched feedback */
+    pool_t.assign_all(eqs, N);
+
     std::vector<GuessStats> stats(candidates.size());
     std::atomic<int> completed{0};
     const auto wall0 = std::chrono::steady_clock::now();
@@ -316,7 +326,7 @@ int main(int argc, char** argv) {
             }
 #endif
             stats[static_cast<size_t>(i)] =
-                score_guess_reusing_buffers(eqs, N, candidates[static_cast<size_t>(i)], counts, touched);
+                score_guess_reusing_buffers(eqs, pool_t, candidates[static_cast<size_t>(i)], counts, touched);
             const int done = ++completed;
             const bool tick = (progress_every > 0 && (done % progress_every == 0 || done == static_cast<int>(candidates.size()))) ||
                                 (progress_every <= 0 && done == static_cast<int>(candidates.size()));
