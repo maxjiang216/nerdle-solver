@@ -12,7 +12,7 @@
  *
  * Usage: ./maxi_guarantee [--pool data/equations_10.txt] [--opening EQ | search [--openers K]] [--tries 6]
  *          [--greedy-only] [--hard-mode] [--exhaustive] [--cand-limit 64] [--pool-limit 40]
- *          [--pool-scan-max 400] [--max-three [--three-sample N]] [--overrides PATH] [--verify PATH] [--threads T]
+ *          [--guesses PATH] [--largest K] [--pool-scan-max 400] [--max-three [--three-sample N]] [--overrides PATH] [--verify PATH] [--threads T]
  *
  * --max-three: guess 2 maximizes the secrets solved by guess 3 (its feedback classes, over the
  * whole pool) among choices that keep the tries guarantee; later guesses as above.
@@ -37,6 +37,7 @@
 #include <random>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 #ifdef _OPENMP
@@ -86,6 +87,9 @@ struct Options {
     bool max_three = false;    /* guess 2: maximize secrets solved by guess 3 (any pool equation) */
     int three_sample = 0;      /* --max-three: score this many random pool equations (0 = all) */
     bool stop_on_fail = false; /* opener search: give up on an opener at its first unsolved bucket */
+    bool reuse_separators = false; /* try recently successful last-step guesses before a full scan */
+    int cores = 0; /* >0: with 3 tries left, learn unseparable cores; try at most this many guesses */
+    bool verbose = false; /* log each core-search attempt to stderr */
 };
 
 struct Override {
@@ -123,6 +127,16 @@ class Searcher {
             return true;
         if (k == 1)
             return false;
+        if (k == 3 && opt_.cores > 0 && !opt_.hard_mode) {
+            const int r = solve_three_with_cores(S, path);
+            if (r < 0)
+                proven_impossible++;
+            return r > 0;
+        }
+        const bool exhaustive_last = (k == 2 && !opt_.hard_mode && static_cast<int>(S.size()) <= opt_.pool_scan_max);
+        const uint64_t h = (k == 2) ? set_hash(S) : 0;
+        if (k == 2 && nonsep_.count(h))
+            return false; /* already proven: no single guess separates S */
 
         /* Score every remaining candidate; greedy = max partitions, lowest index on ties. */
         const nerdle::TransposedSecrets T(eqs_, S, N);
@@ -165,9 +179,28 @@ class Searcher {
         const int n = static_cast<int>(eqs_.size());
         if (k == 2) {
             /* Last decision: any guess that separates every secret wins, so take the first one. */
-            for (int g = 0; g < n; g++)
-                if (separates(g, T))
+            if (opt_.reuse_separators) {
+                for (size_t r = 0; r < recent_sep_.size(); r++) {
+                    const int g = recent_sep_[r];
+                    if (separates(g, T)) {
+                        std::rotate(recent_sep_.begin(), recent_sep_.begin() + static_cast<long>(r),
+                                    recent_sep_.begin() + static_cast<long>(r) + 1);
+                        return try_guess(S, k, g, greedy, path);
+                    }
+                }
+            }
+            for (int g = 0; g < n; g++) {
+                if (separates(g, T)) {
+                    if (opt_.reuse_separators) {
+                        recent_sep_.insert(recent_sep_.begin(), g);
+                        if (recent_sep_.size() > 64)
+                            recent_sep_.pop_back();
+                    }
                     return try_guess(S, k, g, greedy, path);
+                }
+            }
+            if (exhaustive_last)
+                nonsep_.insert(h);
             return false;
         }
         /* Otherwise keep the best pool_limit by score. */
@@ -267,6 +300,240 @@ class Searcher {
         return -1;
     }
 
+    /** Learned sets of answers that no single guess separates (sorted pool indices). */
+    std::vector<std::vector<int>> cores;
+
+    /**
+     * Three guesses left (guess, separate, win): every class left by the guess must be separable by
+     * one more guess. A class is separable iff it contains no unseparable core, so a guess works only
+     * if it splits every core inside S. Cores are seeded from same-tile-multiset families (the usual
+     * culprits), then learned from failed attempts; each is verified unseparable over the whole guess
+     * list. If no guess in the list splits all known cores, S is proven unsolvable in 3.
+     * Returns 1 solved, 0 gave up (attempt limit), -1 proven impossible.
+     */
+    int solve_three_with_cores(const std::vector<int>& S, std::vector<uint32_t>& path) {
+        if (S.size() <= 1)
+            return 1;
+        const nerdle::TransposedSecrets T(eqs_, S, N);
+        int greedy = S[0], greedy_parts = -1;
+        for (int c : S) {
+            int p = score(c, T).parts;
+            if (p > greedy_parts) {
+                greedy_parts = p;
+                greedy = c;
+            }
+        }
+        if (try_guess(S, 3, greedy, greedy, path))
+            return 1;
+
+        /* Seed: unseparable same-multiset families inside S (3..40 members), shrunk to cores. */
+        std::vector<std::vector<int>> local;
+        {
+            std::unordered_map<std::string, std::vector<int>> fam;
+            for (int x : S) {
+                std::string key = eqs_[static_cast<size_t>(x)];
+                std::sort(key.begin(), key.end());
+                fam[key].push_back(x);
+            }
+            for (auto& kv : fam) {
+                /* Big families are too costly to shrink; their parts show up as failed classes. */
+                if (kv.second.size() < 3 || kv.second.size() > 40)
+                    continue;
+                std::sort(kv.second.begin(), kv.second.end());
+                if (!separable(kv.second))
+                    local.push_back(shrink_core(kv.second));
+            }
+        }
+        for (const auto& c : cores)
+            if (std::includes(S.begin(), S.end(), c.begin(), c.end()))
+                local.push_back(c);
+
+        /* All guesses, best-first by largest class (ties: more classes, candidate, index). */
+        const int n = static_cast<int>(eqs_.size());
+        std::vector<Scored> ranked;
+        ranked.reserve(static_cast<size_t>(n));
+        for (int g = 0; g < n; g++)
+            ranked.push_back(score(g, T));
+        std::sort(ranked.begin(), ranked.end(), better);
+
+        int tried = 0;
+        std::vector<size_t> order(local.size()); /* cores checked most-blocking first */
+        for (size_t i = 0; i < order.size(); i++)
+            order[i] = i;
+        size_t start = 0; /* ranked guesses before start keep some core together */
+        while (tried < opt_.cores) {
+            int pick = -1;
+            for (size_t r = start; r < ranked.size() && pick < 0; r++) {
+                const char* gs = eqs_[static_cast<size_t>(ranked[r].g)].c_str();
+                bool ok = true;
+                for (size_t oi = 0; oi < order.size() && ok; oi++) {
+                    const std::vector<int>& core = local[order[oi]];
+                    const uint32_t first = nerdle::compute_feedback_packed(gs, eqs_[static_cast<size_t>(core[0])].c_str(), N);
+                    bool split = false;
+                    for (size_t i = 1; i < core.size() && !split; i++)
+                        split = nerdle::compute_feedback_packed(gs, eqs_[static_cast<size_t>(core[i])].c_str(), N) != first;
+                    if (!split) {
+                        ok = false;
+                        if (oi > 0)
+                            std::swap(order[oi], order[oi / 2]); /* drift blockers to the front */
+                    }
+                }
+                if (ok) {
+                    pick = static_cast<int>(r);
+                    start = r + 1;
+                }
+            }
+            if (pick < 0) {
+                log_three(S, "PROVEN IMPOSSIBLE", local.size(), tried);
+                return -1;
+            }
+            tried++;
+            if (opt_.verbose && tried % 250 == 0) {
+                /* How many guesses still split every known core (0 would prove S impossible). */
+                long long survivors = 0;
+                for (const Scored& c : ranked) {
+                    const char* gs = eqs_[static_cast<size_t>(c.g)].c_str();
+                    bool ok = true;
+                    for (size_t oi = 0; oi < order.size() && ok; oi++) {
+                        const std::vector<int>& core = local[order[oi]];
+                        const uint32_t first = nerdle::compute_feedback_packed(gs, eqs_[static_cast<size_t>(core[0])].c_str(), N);
+                        bool split = false;
+                        for (size_t i = 1; i < core.size() && !split; i++)
+                            split = nerdle::compute_feedback_packed(gs, eqs_[static_cast<size_t>(core[i])].c_str(), N) != first;
+                        ok = split;
+                    }
+                    survivors += ok;
+                }
+                log_three(S, ("survivors " + std::to_string(survivors)).c_str(), local.size(), tried);
+            }
+            last_failed_.clear();
+            if (try_guess(S, 3, ranked[static_cast<size_t>(pick)].g, greedy, path)) {
+                log_three(S, ("solved with " + maxi_display(eqs_[static_cast<size_t>(ranked[static_cast<size_t>(pick)].g)])).c_str(),
+                          local.size(), tried);
+                return 1;
+            }
+            if (last_failed_.size() >= 3) {
+                local.push_back(shrink_core(last_failed_));
+                cores.push_back(local.back());
+                order.insert(order.begin(), local.size() - 1);
+                start = 0; /* earlier guesses were rejected by older cores only; recheck is cheap */
+            }
+        }
+        log_three(S, "gave up", local.size(), tried);
+        return 0;
+    }
+
+    void log_three(const std::vector<int>& S, const char* what, size_t ncores, int tried) const {
+        if (!opt_.verbose)
+            return;
+        static std::mutex mu;
+        std::lock_guard<std::mutex> lk(mu);
+        std::cerr << "    [" << S.size() << "] " << what << "  (" << ncores << " cores, " << tried
+                  << " guesses tried)\n";
+    }
+
+    long long core_checks = 0;
+    long long proven_impossible = 0; /* buckets (3 tries left) shown to have no strategy */
+
+  private:
+    std::vector<int> last_failed_; /* the child whose search failed most recently */
+
+    /** True if one guess separates every secret in C (full guess list; cached failures). */
+    bool separable(const std::vector<int>& C) {
+        if (C.size() <= 2)
+            return true;
+        const uint64_t h = set_hash(C);
+        if (nonsep_.count(h))
+            return false;
+        core_checks++;
+        const nerdle::TransposedSecrets TC(eqs_, C, N);
+        for (int g : recent_sep_)
+            if (separates(g, TC))
+                return true;
+        const int n = static_cast<int>(eqs_.size());
+        for (int g = 0; g < n; g++) {
+            if (separates(g, TC)) {
+                recent_sep_.insert(recent_sep_.begin(), g);
+                if (recent_sep_.size() > 64)
+                    recent_sep_.pop_back();
+                return true;
+            }
+        }
+        nonsep_.insert(h);
+        return false;
+    }
+
+    /**
+     * Drop members while the rest stays unseparable: a minimal core (C must be unseparable).
+     * One pass over the guess list records every distinct way a guess partitions C; a subset is
+     * unseparable exactly when each recorded partition puts two of its members together, so the
+     * shrinking itself needs no further feedback computation.
+     */
+    std::vector<int> shrink_core(std::vector<int> C) {
+        if (C.size() <= 3 || C.size() > 64)
+            return C; /* partitions of bigger sets get too many and too long to keep */
+        const size_t m = C.size();
+        const nerdle::TransposedSecrets TC(eqs_, C, N);
+        if (codes_.size() < TC.blocks() * nerdle::TransposedSecrets::kLanes)
+            codes_.resize(TC.blocks() * nerdle::TransposedSecrets::kLanes);
+        std::unordered_set<std::string> seen;
+        std::vector<std::string> parts; /* label per member, labels in first-occurrence order */
+        std::string lab(m, '\0');
+        const int n = static_cast<int>(eqs_.size());
+        for (int g = 0; g < n; g++) {
+            nerdle::feedback_all(eqs_[static_cast<size_t>(g)].c_str(), TC, codes_.data());
+            ++epoch_;
+            int next = 0;
+            for (size_t i = 0; i < m; i++) {
+                const uint16_t c = codes_[i];
+                if (stamp_[c] != epoch_) {
+                    stamp_[c] = epoch_;
+                    cnt_[c] = next++;
+                }
+                lab[i] = static_cast<char>(cnt_[c]);
+            }
+            if (next == static_cast<int>(m))
+                return C; /* separable after all: nothing to shrink */
+            if (seen.insert(lab).second)
+                parts.push_back(lab);
+        }
+        std::vector<char> alive(m, 1);
+        auto unseparable = [&]() {
+            int mark[256];
+            for (const std::string& p : parts) {
+                for (int& x : mark)
+                    x = -1;
+                bool clash = false;
+                for (size_t i = 0; i < m && !clash; i++) {
+                    if (!alive[i])
+                        continue;
+                    const int l = static_cast<unsigned char>(p[i]);
+                    if (mark[l] >= 0)
+                        clash = true;
+                    mark[l] = static_cast<int>(i);
+                }
+                if (!clash)
+                    return false; /* this partition separates the alive members */
+            }
+            return true;
+        };
+        size_t alive_n = m;
+        for (size_t i = 0; i < m && alive_n > 3; i++) {
+            alive[i] = 0;
+            if (unseparable())
+                alive_n--;
+            else
+                alive[i] = 1;
+        }
+        std::vector<int> core;
+        for (size_t i = 0; i < m; i++)
+            if (alive[i])
+                core.push_back(C[i]);
+        nonsep_.insert(set_hash(core));
+        return core;
+    }
+
+  public:
   private:
     struct Scored {
         int g;
@@ -282,6 +549,17 @@ class Searcher {
     std::vector<int> cnt_;
     std::vector<uint16_t> codes_; /* feedback scratch for the batched routines */
     int epoch_ = 0;
+    std::unordered_set<uint64_t> nonsep_; /* sets proven to have no separating guess */
+    std::vector<int> recent_sep_;         /* --reuse-separators: most recent first */
+
+    static uint64_t set_hash(const std::vector<int>& S) {
+        uint64_t h = 1469598103934665603ULL ^ S.size();
+        for (int x : S) {
+            h ^= static_cast<uint32_t>(x);
+            h *= 1099511628211ULL;
+        }
+        return h;
+    }
 
     static bool better(const Scored& a, const Scored& b) {
         if (a.maxc != b.maxc)
@@ -375,18 +653,24 @@ class Searcher {
             return (a.second - a.first) > (b.second - b.first);
         });
 
+        std::vector<std::vector<int>> kids(ranges.size());
+        for (size_t c = 0; c < ranges.size(); c++) {
+            for (size_t i = ranges[c].first; i < ranges[c].second; i++)
+                kids[c].push_back(coded[i].second);
+            std::sort(kids[c].begin(), kids[c].end());
+            if (k - 1 == 2 && kids[c].size() >= 3 && nonsep_.count(set_hash(kids[c])))
+                return false; /* a child already proven unseparable: fail before any search */
+        }
+
         const size_t mark = overrides.size();
         if (g != greedy)
             overrides.push_back({path, g});
-        std::vector<int> child;
-        for (auto& r : ranges) {
-            child.clear();
-            for (size_t i = r.first; i < r.second; i++)
-                child.push_back(coded[i].second);
-            std::sort(child.begin(), child.end());
-            path.push_back(coded[r.first].first);
-            bool ok = solve(child, k - 1, path);
+        for (size_t c = 0; c < ranges.size(); c++) {
+            path.push_back(coded[ranges[c].first].first);
+            bool ok = solve(kids[c], k - 1, path);
             path.pop_back();
+            if (!ok)
+                last_failed_ = kids[c];
             if (!ok) {
                 overrides.resize(mark);
                 return false;
@@ -479,6 +763,8 @@ int main(int argc, char** argv) {
     int max_openers = 0; /* --opening search: try this many openers (0 = all) */
     std::string overrides_path;
     std::string verify_path;
+    std::string guesses_path; /* optional guess list (superset of the answer pool) */
+    int largest = 0;          /* only solve the K largest opening buckets (0 = all) */
     int tries = 6;
     Options opt;
     for (int i = 1; i < argc; i++) {
@@ -504,6 +790,16 @@ int main(int argc, char** argv) {
             opt.pool_limit = std::atoi(next().c_str());
         else if (a == "--pool-scan-max")
             opt.pool_scan_max = std::atoi(next().c_str());
+        else if (a == "--reuse-separators")
+            opt.reuse_separators = true;
+        else if (a == "--cores")
+            opt.cores = std::atoi(next().c_str());
+        else if (a == "--verbose")
+            opt.verbose = true;
+        else if (a == "--guesses")
+            guesses_path = next();
+        else if (a == "--largest")
+            largest = std::atoi(next().c_str());
         else if (a == "--openers")
             max_openers = std::atoi(next().c_str());
         else if (a == "--exhaustive") {
@@ -546,7 +842,50 @@ int main(int argc, char** argv) {
             return 1;
         }
     }
-    const int n = static_cast<int>(eqs.size());
+    /* Answers are eqs[secrets[i]]. With --guesses, eqs becomes the guess list (answers missing from
+     * it are appended) so any listed equation may be guessed but only answers are secrets. */
+    std::vector<int> secrets;
+    if (!guesses_path.empty()) {
+        std::vector<std::string> answers = std::move(eqs);
+        eqs.clear();
+        std::ifstream f(guesses_path);
+        if (!f) {
+            std::cerr << "Cannot open " << guesses_path << "\n";
+            return 1;
+        }
+        std::string line;
+        while (std::getline(f, line))
+            if (!line.empty())
+                eqs.push_back(normalize_maxi_tiles(line));
+        std::unordered_map<std::string, int> at;
+        at.reserve(eqs.size() * 2);
+        for (size_t i = 0; i < eqs.size(); i++) {
+            if (static_cast<int>(eqs[i].size()) != N) {
+                std::cerr << "Guess list rows must match the pool length\n";
+                return 1;
+            }
+            at.emplace(eqs[i], static_cast<int>(i));
+        }
+        size_t appended = 0;
+        for (std::string& a : answers) {
+            auto it = at.find(a);
+            if (it == at.end()) {
+                it = at.emplace(a, static_cast<int>(eqs.size())).first;
+                eqs.push_back(a);
+                appended++;
+            }
+            secrets.push_back(it->second);
+        }
+        std::sort(secrets.begin(), secrets.end());
+        std::cerr << "Answers " << secrets.size() << ", guesses " << eqs.size() << " (" << appended
+                  << " answers not in the guess list were added)\n";
+    } else {
+        secrets.resize(eqs.size());
+        for (size_t i = 0; i < secrets.size(); i++)
+            secrets[i] = static_cast<int>(i);
+    }
+    const int n = static_cast<int>(eqs.size());     /* guesses */
+    const int n_sec = static_cast<int>(secrets.size()); /* answers */
     const uint32_t green = nerdle::all_green_packed(N);
 
     /* Bucket every secret by an opening's feedback; buckets largest first. */
@@ -556,7 +895,7 @@ int main(int argc, char** argv) {
         for (uint32_t c : codes)
             by_code[c].clear();
         codes.clear();
-        for (int s = 0; s < n; s++) {
+        for (int s : secrets) {
             uint32_t c = nerdle::compute_feedback_packed(eqs[static_cast<size_t>(open_idx)].c_str(),
                                                          eqs[static_cast<size_t>(s)].c_str(), N);
             if (c == green)
@@ -652,7 +991,7 @@ int main(int argc, char** argv) {
         /* Openers by partition count (most buckets first); the first that solves everything wins. */
         std::vector<std::pair<int, int>> order(static_cast<size_t>(n));
         nerdle::TransposedSecrets all;
-        all.assign_all(eqs, N);
+        all.assign(eqs, secrets.data(), secrets.size(), N);
 #ifdef _OPENMP
 #pragma omp parallel
 #endif
@@ -665,7 +1004,7 @@ int main(int argc, char** argv) {
             for (int g = 0; g < n; g++) {
                 int parts = 0;
                 nerdle::feedback_all(eqs[static_cast<size_t>(g)].c_str(), all, codes.data());
-                for (int s = 0; s < n; s++) {
+                for (int s = 0; s < n_sec; s++) {
                     const uint16_t c = codes[static_cast<size_t>(s)];
                     if (stamp[c] != g) {
                         stamp[c] = g;
@@ -686,7 +1025,7 @@ int main(int argc, char** argv) {
             if (r.unsolved_buckets == 0) {
                 std::cout << "Opener " << maxi_display(eqs[static_cast<size_t>(g)]) << " ("
                           << -order[static_cast<size_t>(i)].first << " partitions, rank " << i + 1
-                          << ") solves all " << n << " within " << tries << "  ["
+                          << ") solves all " << n_sec << " within " << tries << "  ["
                           << std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count()
                           << " s]\n";
                 return 0;
@@ -721,6 +1060,8 @@ int main(int argc, char** argv) {
         return 1;
     }
     bucketize(open_idx);
+    if (largest > 0 && verify_path.empty() && static_cast<size_t>(largest) < codes.size())
+        codes.resize(static_cast<size_t>(largest)); /* experiment on the hardest buckets only */
     std::cerr << "Pool " << n << ", opening " << maxi_display(want) << ", " << codes.size()
               << " opening buckets, largest " << by_code[codes[0]].size() << "\n";
 
